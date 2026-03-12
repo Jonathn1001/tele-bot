@@ -1,4 +1,5 @@
 from telethon import TelegramClient, events
+from telethon.sessions import StringSession
 
 import config
 from buffer import Message, MessageBuffer
@@ -7,8 +8,9 @@ from buffer import Message, MessageBuffer
 class TelegramCrawler:
     def __init__(self, buffer: MessageBuffer) -> None:
         self._buffer = buffer
+        session = StringSession(config.SESSION_STRING) if config.SESSION_STRING else "session"
         self._client = TelegramClient(
-            "session",
+            session,
             config.TELEGRAM_API_ID,
             config.TELEGRAM_API_HASH,
             connection_retries=None,
