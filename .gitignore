@@ -1,5 +1,6 @@
 .env
 session.session
+from_telethon.py
 session.session-journal
 __pycache__/
 *.py[cod]
