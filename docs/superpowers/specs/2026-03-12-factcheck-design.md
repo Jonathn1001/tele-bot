@@ -7,7 +7,7 @@
 
 Two changes bundled together:
 
-1. Remove `/trends` and `/entities` commands. Add `/factcheck <claim>` — users submit a specific claim and Gemini validates it against buffered channel messages.
+1. Remove `/trends` and `/entities` commands. Add `/factcheck <claim>` — users submit a specific claim and Gemini validates it by cross-referencing both buffered channel messages and live Google Search results (via Gemini's built-in grounding feature).
 2. Add PostgreSQL persistence (Aiven) as an archive. Every incoming live message is written to the DB. The in-memory buffer is unchanged and still the sole source for analysis commands. A background pruner task deletes rows older than a configurable retention period.
 
 ## Scope
@@ -36,16 +36,36 @@ Add:
 
 ```python
 async def fact_check(claim: str, messages: list[Message]) -> str:
-    return await _ask(
+    context = _format_messages(messages)
+    prompt = (
         f"You are an intelligence analyst. A user has submitted this claim for fact-checking:\n\n"
         f'"{claim}"\n\n'
-        "Based ONLY on the Telegram messages provided, assess whether this claim is supported. "
+        "Cross-reference this claim using BOTH the Telegram channel messages below AND "
+        "your Google Search grounding to find current, authoritative information.\n\n"
         "Start your response with one of: SUPPORTED / CONTRADICTED / INSUFFICIENT EVIDENCE. "
-        "Then provide a 2-3 sentence explanation. "
-        "If relevant, quote specific messages (channel + timestamp) as evidence.",
-        messages,
+        "Then provide a 2-3 sentence explanation citing both channel evidence (channel + timestamp) "
+        "and external sources where relevant.\n\n"
+        f"Channel messages:\n\n{context}"
     )
+    try:
+        response = await asyncio.to_thread(
+            _client.models.generate_content,
+            model="gemini-2.5-flash",
+            contents=prompt,
+            config=types.GenerateContentConfig(
+                tools=[types.Tool(google_search=types.GoogleSearch())],
+            ),
+        )
+        return response.text
+    except Exception as exc:
+        return f"Analysis failed: {exc}"
 ```
+
+Notes:
+- `fact_check` does **not** use `_ask` — `_ask` does not support tools. `fact_check` calls `_client` directly, following the same pattern as `_ask` internally.
+- `thinking_budget=0` is omitted for `fact_check` — grounding + thinking is incompatible with `thinking_budget=0` in the Gemini API. The grounding tool requires the default thinking config.
+- `_format_messages` is reused from the same module — no duplication.
+- `types.Tool` and `types.GoogleSearch` are already available via the existing `from google.genai import types` import. No new imports needed.
 
 ## bot.py
 
@@ -86,7 +106,7 @@ Notes:
 
 Update `/start` help text — replace the `/trends` and `/entities` lines with:
 ```
-/factcheck <claim> — Verify a claim against monitored messages
+/factcheck <claim> — Verify a claim against channel messages + web sources
 ```
 The existing `parse_mode=ParseMode.MARKDOWN` kwarg on the `/start` `message.answer()` call must be preserved.
 
@@ -114,8 +134,9 @@ Followed by a 2-3 sentence explanation and, where relevant, quoted evidence (cha
 
 ## Key Constraints (fact-check)
 
-- Fact-checking is performed **only against buffered messages** — no external search or internet access
-- Gemini is prompted to be explicit about this limitation via "Based ONLY on the Telegram messages provided"
+- Fact-checking cross-references **both** buffered channel messages and live Google Search results via Gemini's built-in grounding
+- Google Search grounding is enabled via `types.Tool(google_search=types.GoogleSearch())` — no extra API key or dependency required
+- `thinking_budget=0` is **not** set for `fact_check` — grounding is incompatible with disabled thinking in the Gemini API
 - `CommandObject` is already part of aiogram — no new dependency for this feature
 
 ---
@@ -182,16 +203,18 @@ PRUNE_INTERVAL_HOURS = max(1, int(os.environ.get("PRUNE_INTERVAL_HOURS", "24")))
 
 ### `crawler.py` changes
 
-`TelegramCrawler.__init__` gains `pool` as a second positional parameter stored as `self._pool`. Use a string annotation to avoid importing asyncpg in crawler.py: `pool: "asyncpg.Pool"`. Only `db` needs to be imported in `crawler.py`.
+`TelegramCrawler.__init__` gains `pool` as a second positional parameter stored as `self._pool`. Use a string annotation to avoid importing asyncpg in crawler.py: `pool: "asyncpg.Pool"`. Import both `asyncio` and `db` at the top of `crawler.py`.
 
 In the live message handler only (not `_backfill`), after `self._buffer.add()`:
 ```python
-asyncio.create_task(db.insert_message(self._pool, msg))
+asyncio.create_task(db.insert_message(self._pool, msg)).add_done_callback(
+    lambda t: t.exception() if not t.cancelled() else None
+)
 ```
 
-`_backfill` does **not** write to the DB — backfill replays historical messages on every restart, which would produce duplicate rows. Only new live messages are archived.
+The `add_done_callback` retrieves and discards the exception, silencing CPython's `Task exception was never retrieved` stderr warning. DB insert failures remain best-effort with no retry.
 
-`db` must be imported at the top of `crawler.py`.
+`_backfill` does **not** write to the DB — backfill replays historical messages on every restart, which would produce duplicate rows. Only new live messages are archived.
 
 ### `main.py` changes
 
@@ -241,6 +264,6 @@ Add `asyncpg` on its own line.
 |---|---|
 | `DATABASE_URL` missing | Bot fails at startup with `KeyError` (same as other required vars) |
 | `init_pool` fails (bad DSN, Aiven unreachable) | Exception propagates out of `main()` before `asyncio.gather()` is reached; bot never starts. No retry — fix config and restart. |
-| DB insert fails | Best-effort and silently lost: fire-and-forget tasks have non-deterministic exception visibility; no retry; message is still added to buffer normally |
+| DB insert fails | Best-effort: exception is discarded via `done_callback`; no retry; message is still added to buffer normally |
 | DB prune fails | Caught inside `pruner()` loop with `try/except`; error is printed; loop continues; crawler and bot are unaffected |
 | Aiven SSL required | `ssl="require"` is hardcoded in `init_pool` — Aiven always requires SSL |
