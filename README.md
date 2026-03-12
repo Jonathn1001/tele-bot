@@ -81,6 +81,47 @@ The easiest way to run the bot stably is via Docker Compose:
 
 _The `session.session` file is mounted as a volume so the authenticated Telethon session persists across container restarts._
 
+## Deploying to Render
+
+The bot runs as a **Background Worker** on Render (no web server or health-check port required). Authentication uses a `StringSession` string stored as an environment variable so no persistent disk is needed.
+
+### Step 1 — Generate a StringSession (one-time, run locally)
+
+With your virtual environment active, run this script once to authenticate and print the session string:
+
+```python
+from telethon.sessions import StringSession
+from telethon.sync import TelegramClient
+import os
+
+API_ID = int(os.environ["TELEGRAM_API_ID"])
+API_HASH = os.environ["TELEGRAM_API_HASH"]
+
+with TelegramClient(StringSession(), API_ID, API_HASH) as client:
+    print(client.session.save())
+```
+
+Copy the printed string — you'll need it as `SESSION_STRING` in the next step.
+
+### Step 2 — Create the Render service
+
+1. Push the repo to GitHub.
+2. In the Render dashboard, click **New → Background Worker** and connect your repository. Render will detect `render.yaml` automatically.
+3. Under **Environment**, add the following secrets manually:
+
+| Variable            | Value                                                   |
+| ------------------- | ------------------------------------------------------- |
+| `TELEGRAM_API_ID`   | from my.telegram.org                                    |
+| `TELEGRAM_API_HASH` | from my.telegram.org                                    |
+| `BOT_TOKEN`         | from @BotFather                                         |
+| `GEMINI_API_KEY`    | from Google AI Studio                                   |
+| `CHANNELS`          | comma-separated usernames, e.g. `bbc_news,cnn_breaking` |
+| `SESSION_STRING`    | string generated in Step 1                              |
+
+4. Deploy. The bot will connect and begin monitoring immediately. Follow logs in the Render dashboard to confirm.
+
+> **Local development** is unaffected — when `SESSION_STRING` is not set, the bot falls back to the `session.session` file as before.
+
 ## Limitations & Constraints
 
 - **No Persistence:** The message buffer is entirely in-memory. All collected messages are lost when the process restarts.

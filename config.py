@@ -11,3 +11,4 @@ GEMINI_API_KEY = os.environ["GEMINI_API_KEY"]
 CHANNELS = [ch.strip() for ch in os.environ.get("CHANNELS", "").split(",") if ch.strip()]
 BUFFER_SIZE = int(os.environ.get("BUFFER_SIZE", "100"))
 MAX_CONTEXT_MESSAGES = int(os.environ.get("MAX_CONTEXT_MESSAGES", "50"))
+SESSION_STRING = os.environ.get("SESSION_STRING", "")
