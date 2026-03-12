@@ -8,22 +8,23 @@
 
 **Tech Stack:** Python 3.12, aiogram 3.x, google-genai SDK, asyncpg, Aiven PostgreSQL (SSL required)
 
-**Note:** This project has no test suite. TDD steps are omitted. Verification is done by reading the code for correctness and running the bot manually.
+**Note:** A test suite exists at `tests/` using pytest + pytest-asyncio (auto mode). Tests must pass after each task. Run with: `python -m pytest` from the project root (requires `pip install -r requirements-dev.txt` first).
 
 ---
 
 ## Chunk 1: /factcheck Command
 
-### Task 1: Update `analyzer.py`
+### Task 1: Update `analyzer.py` and `tests/test_analyzer.py`
 
 **Files:**
 - Modify: `analyzer.py`
+- Modify: `tests/test_analyzer.py`
 
-- [ ] **Step 1: Remove `analyze_trends` and `extract_entities`**
+- [ ] **Step 1: Remove `analyze_trends` and `extract_entities` from `analyzer.py`**
 
 Delete lines 47–61 of `analyzer.py` (both functions). The file should end after `assess_threat`.
 
-- [ ] **Step 2: Add `fact_check` function**
+- [ ] **Step 2: Add `fact_check` function to `analyzer.py`**
 
 Append to `analyzer.py` after `assess_threat`:
 
@@ -56,14 +57,56 @@ async def fact_check(claim: str, messages: list[Message]) -> str:
 
 **Why not `_ask`:** `_ask` uses `thinking_budget=0` which is incompatible with grounding tools. `fact_check` calls `_client` directly — same pattern as `_ask` internally. No new imports needed (`asyncio`, `_client`, `types`, `_format_messages` are all already in scope).
 
-- [ ] **Step 3: Verify `analyzer.py` looks correct**
+- [ ] **Step 3: Update `tests/test_analyzer.py`**
 
-`analyzer.py` should now have exactly 3 public functions: `summarize`, `assess_threat`, `fact_check`. Confirm `analyze_trends` and `extract_entities` are gone.
+Remove these test functions (they test the deleted functions):
+- `test_analyze_trends_returns_model_text`
+- `test_extract_entities_returns_model_text`
+- `test_analyze_trends_failure_returns_error_string`
+- `test_extract_entities_failure_returns_error_string`
 
-- [ ] **Step 4: Commit**
+Add these new tests after `test_assess_threat_failure_returns_error_string`:
+
+```python
+async def test_fact_check_returns_model_text():
+    msgs = _make_msgs("Event A", "Event B")
+    with patch.object(analyzer, "_client", _mock_client("SUPPORTED\nEvidence found.")):
+        result = await analyzer.fact_check("Russia attacked Ukraine", msgs)
+    assert result == "SUPPORTED\nEvidence found."
+
+
+async def test_fact_check_failure_returns_error_string():
+    msgs = _make_msgs("msg")
+    mock_client = MagicMock()
+    mock_client.models.generate_content.side_effect = RuntimeError("API error")
+    with patch.object(analyzer, "_client", mock_client):
+        result = await analyzer.fact_check("some claim", msgs)
+    assert result.startswith("Analysis failed:")
+
+
+async def test_fact_check_calls_generate_content_with_search_tool():
+    msgs = _make_msgs("msg")
+    mock_client = _mock_client("SUPPORTED\nok")
+    with patch.object(analyzer, "_client", mock_client):
+        await analyzer.fact_check("some claim", msgs)
+    call_kwargs = mock_client.models.generate_content.call_args[1]
+    tools = call_kwargs["config"].tools
+    assert len(tools) == 1
+    assert tools[0].google_search is not None
+```
+
+- [ ] **Step 4: Run tests to verify**
 
 ```bash
-git add analyzer.py
+python -m pytest tests/test_analyzer.py -v
+```
+
+Expected: all tests pass. The three new `fact_check` tests should pass; the old `trends`/`entities` tests are gone.
+
+- [ ] **Step 5: Commit**
+
+```bash
+git add analyzer.py tests/test_analyzer.py
 git commit -m "feat: replace trends/entities with fact_check using Gemini Search grounding"
 ```
 
@@ -151,10 +194,79 @@ Confirm:
 - `cmd_trends` and `cmd_entities` are gone
 - `cmd_factcheck` is present and uses `command: CommandObject`
 
-- [ ] **Step 8: Commit**
+- [ ] **Step 8: Update `tests/test_commands.py`**
+
+The existing test file has `cmd_trends` and `cmd_entities` in two `@pytest.mark.parametrize` lists — remove them. Add new `cmd_factcheck` tests.
+
+**Remove** `bot.cmd_trends` and `bot.cmd_entities` from the parametrize decorators (lines 72–77 and 89–94). After removal, the two parametrize lists should only have `bot.cmd_summary` and `bot.cmd_threat`.
+
+**Add** these tests after the existing parametrize tests:
+
+```python
+# ---------------------------------------------------------------------------
+# /factcheck
+# ---------------------------------------------------------------------------
+
+async def test_factcheck_no_claim_returns_usage():
+    from unittest.mock import MagicMock
+    msg = _mock_msg()
+    cmd = MagicMock()
+    cmd.args = None
+    buf = _make_buffer("some message")
+    with patch.object(bot, "_buffer", buf):
+        await bot.cmd_factcheck(msg, cmd)
+    msg.answer.assert_called_once_with("Usage: /factcheck <your claim>")
+
+
+async def test_factcheck_claim_too_long_returns_error():
+    from unittest.mock import MagicMock
+    msg = _mock_msg()
+    cmd = MagicMock()
+    cmd.args = "x" * 501
+    buf = _make_buffer("some message")
+    with patch.object(bot, "_buffer", buf):
+        await bot.cmd_factcheck(msg, cmd)
+    text = msg.answer.call_args[0][0]
+    assert "too long" in text.lower()
+
+
+async def test_factcheck_empty_buffer_returns_no_messages():
+    from unittest.mock import MagicMock
+    msg = _mock_msg()
+    cmd = MagicMock()
+    cmd.args = "Russia attacked Ukraine"
+    with patch.object(bot, "_buffer", None):
+        await bot.cmd_factcheck(msg, cmd)
+    msg.answer.assert_called_once_with("No messages collected yet. Please wait a moment.")
+
+
+async def test_factcheck_calls_analyzer_and_replies():
+    from unittest.mock import MagicMock
+    msg = _mock_msg()
+    cmd = MagicMock()
+    cmd.args = "Russia attacked Ukraine"
+    buf = _make_buffer("test message")
+    mock_fn = AsyncMock(return_value="SUPPORTED\nEvidence.")
+    with patch.object(bot, "_buffer", buf), \
+         patch("analyzer.fact_check", new=mock_fn):
+        await bot.cmd_factcheck(msg, cmd)
+    mock_fn.assert_called_once()
+    all_texts = [c[0][0] for c in msg.answer.call_args_list]
+    assert any("SUPPORTED" in t for t in all_texts)
+```
+
+- [ ] **Step 9: Run tests to verify**
 
 ```bash
-git add bot.py
+python -m pytest tests/test_commands.py -v
+```
+
+Expected: all tests pass.
+
+- [ ] **Step 10: Commit**
+
+```bash
+git add bot.py tests/test_commands.py
 git commit -m "feat: add /factcheck handler, remove /trends and /entities"
 ```
 
@@ -262,7 +374,7 @@ git commit -m "feat: add db.py with asyncpg pool init, insert, and prune"
 **Files:**
 - Modify: `config.py`
 
-- [ ] **Step 1: Add DB config vars**
+- [ ] **Step 1: Add DB config vars to `config.py`**
 
 Append to `config.py` after `MAX_CONTEXT_MESSAGES`:
 
@@ -275,10 +387,29 @@ PRUNE_INTERVAL_HOURS = max(1, int(os.environ.get("PRUNE_INTERVAL_HOURS", "24")))
 
 `DATABASE_URL` uses `os.environ["DATABASE_URL"]` (no default) — bot fails at startup with `KeyError` if missing, same as other required vars.
 
-- [ ] **Step 2: Commit**
+- [ ] **Step 2: Add `DATABASE_URL` to test env setup**
+
+`test_analyzer.py` and `test_commands.py` both import modules that transitively import `config.py`. Adding `DATABASE_URL` as a required env var will cause those imports to raise `KeyError` unless the tests also set it.
+
+In `tests/test_analyzer.py`, add this line to the env setup block at the top (after the other `setdefault` calls):
+```python
+os.environ.setdefault("DATABASE_URL", "postgresql://dummy:dummy@localhost:5432/dummy")
+```
+
+In `tests/test_commands.py`, add the same line to its env setup block.
+
+- [ ] **Step 3: Run all tests to verify**
 
 ```bash
-git add config.py
+python -m pytest -v
+```
+
+Expected: all tests pass.
+
+- [ ] **Step 4: Commit**
+
+```bash
+git add config.py tests/test_analyzer.py tests/test_commands.py
 git commit -m "feat: add DATABASE_URL, RETENTION_DAYS, PRUNE_INTERVAL_HOURS to config"
 ```
 
@@ -412,11 +543,11 @@ git commit -m "feat: init DB pool at startup, wire pruner task into asyncio.gath
 
 ---
 
-### Task 8: Update `requirements.txt` and create `.env.example`
+### Task 8: Update `requirements.txt` and `.env.example`
 
 **Files:**
 - Modify: `requirements.txt`
-- Create: `.env.example`
+- Modify: `.env.example` (already exists — update it)
 
 - [ ] **Step 1: Add asyncpg to `requirements.txt`**
 
@@ -425,28 +556,11 @@ Append to `requirements.txt`:
 asyncpg>=0.29
 ```
 
-- [ ] **Step 2: Create `.env.example`**
+- [ ] **Step 2: Update `.env.example`**
 
-Create `.env.example` with all required and optional variables:
+Add the three new DB env vars to the existing `.env.example`. Append at the end:
 
 ```
-# Telegram credentials (from my.telegram.org)
-TELEGRAM_API_ID=your_api_id
-TELEGRAM_API_HASH=your_api_hash
-
-# Bot token (from @BotFather)
-BOT_TOKEN=your_bot_token
-
-# Gemini API key (from Google AI Studio)
-GEMINI_API_KEY=your_gemini_api_key
-
-# Comma-separated Telegram channel usernames to monitor
-CHANNELS=@channel1,@channel2
-
-# Optional: buffer and context limits
-BUFFER_SIZE=100
-MAX_CONTEXT_MESSAGES=50
-
 # Aiven PostgreSQL connection string
 DATABASE_URL=postgresql://user:pass@host:port/dbname?sslmode=require
 
