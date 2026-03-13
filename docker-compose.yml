@@ -1,6 +1,6 @@
 services:
   bot:
-    build: .
+    image: ${DOCKER_IMAGE:-tele-bot}
     restart: unless-stopped
     env_file: .env
     volumes:
