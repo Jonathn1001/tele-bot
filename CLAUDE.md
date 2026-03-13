@@ -38,7 +38,7 @@ Both tasks share the same `MessageBuffer` instance directly via reference (no qu
 
 **`buffer.py` (MessageBuffer):** In-memory `dict[channel_username, deque[Message]]`, capped at `BUFFER_SIZE` per channel. All messages are lost on process restart.
 
-**`analyzer.py`:** All four analysis commands call a private `_ask()` helper that formats buffered messages into a timestamped block and sends it with a command-specific system prompt to Gemini 1.5 Pro. Gemini calls run in `asyncio.to_thread()` since `google-generativeai` is synchronous.
+**`analyzer.py`:** Analysis commands call a private `_ask()` helper that formats buffered messages into a timestamped block and sends it with a command-specific system prompt to Gemini 2.5 Flash. The `/factcheck` command calls `_client` directly to enable Google Search grounding, which is incompatible with `_ask`'s `thinking_budget=0` config.
 
 **Dual Telegram identity:** The system uses two separate Telegram connections simultaneously — Telethon (MTProto, user account) to read channels, and aiogram (Bot API) to respond to users.
 
@@ -55,6 +55,9 @@ All config is read from environment variables (via `.env` + `python-dotenv`):
 | `CHANNELS` | Yes | `""` | Comma-separated channel usernames to monitor |
 | `BUFFER_SIZE` | No | `100` | Max messages stored per channel |
 | `MAX_CONTEXT_MESSAGES` | No | `50` | Max messages sent to LLM per analysis |
+| `DATABASE_URL` | Yes | — | Aiven PostgreSQL connection string |
+| `RETENTION_DAYS` | No | `30` | Days to keep archived messages (min 1) |
+| `PRUNE_INTERVAL_HOURS` | No | `24` | How often to run pruner in hours (min 1) |
 
 Copy `.env.example` to `.env` and fill in values before running.
 
@@ -65,13 +68,12 @@ Copy `.env.example` to `.env` and fill in values before running.
 | `/start` | Help text |
 | `/channels` | Monitored channels and message counts |
 | `/summary` | Top 5 significant events |
-| `/trends` | Recurring themes and escalating situations |
-| `/entities` | Named entities grouped by type |
+| `/factcheck <claim>` | Cross-check a claim against channel messages + Google Search |
 | `/threat` | Conflict risk assessment (1–5 scale) |
 
 ## Key Constraints
 
-- **No persistence:** Buffer is in-memory only; messages are lost on restart.
+- **In-memory analysis buffer:** Buffer is in-memory only and is the sole source for all analysis commands. Lost on restart.
+- **PostgreSQL archive:** Live messages (not backfill) are asynchronously archived to Aiven PostgreSQL via `db.py`. Fire-and-forget — DB failures are silently discarded.
 - **No access control:** Any user who finds the bot can query it.
 - **Response chunking:** `bot.py` splits LLM responses into 4096-char chunks (Telegram's message limit).
-- **No test suite** exists in this project.

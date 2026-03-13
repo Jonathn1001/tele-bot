@@ -5,6 +5,7 @@ os.environ.setdefault("TELEGRAM_API_ID", "12345")
 os.environ.setdefault("TELEGRAM_API_HASH", "dummy_hash")
 os.environ.setdefault("BOT_TOKEN", "0:AADummy")
 os.environ.setdefault("GEMINI_API_KEY", "dummy_key")
+os.environ.setdefault("DATABASE_URL", "postgresql://dummy:dummy@localhost:5432/dummy")
 
 from unittest.mock import MagicMock, patch
 from datetime import datetime

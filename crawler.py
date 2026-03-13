@@ -1,13 +1,17 @@
+import asyncio
+
 from telethon import TelegramClient, events
 from telethon.sessions import StringSession
 
 import config
+import db
 from buffer import Message, MessageBuffer
 
 
 class TelegramCrawler:
-    def __init__(self, buffer: MessageBuffer) -> None:
+    def __init__(self, buffer: MessageBuffer, pool: "asyncpg.Pool") -> None:
         self._buffer = buffer
+        self._pool = pool
         session = StringSession(config.SESSION_STRING) if config.SESSION_STRING else "session"
         self._client = TelegramClient(
             session,
@@ -37,6 +41,9 @@ class TelegramCrawler:
                 sender=sender,
             )
             self._buffer.add(channel_name, msg)
+            asyncio.create_task(db.insert_message(self._pool, msg)).add_done_callback(
+                lambda t: t.exception() if not t.cancelled() else None
+            )
 
         print(f"Crawler: monitoring {channels}")
         await self._client.run_until_disconnected()
