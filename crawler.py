@@ -41,9 +41,10 @@ class TelegramCrawler:
                 sender=sender,
             )
             self._buffer.add(channel_name, msg)
-            asyncio.create_task(db.insert_message(self._pool, msg)).add_done_callback(
-                lambda t: t.exception() if not t.cancelled() else None
-            )
+            def _on_done(t: asyncio.Task, ch: str = channel_name) -> None:
+                if not t.cancelled() and t.exception():
+                    print(f"Crawler: DB insert failed for {ch}: {t.exception()}")
+            asyncio.create_task(db.insert_message(self._pool, msg)).add_done_callback(_on_done)
 
         print(f"Crawler: monitoring {channels}")
         await self._client.run_until_disconnected()
@@ -62,4 +63,8 @@ class TelegramCrawler:
                 sender=sender,
             )
             self._buffer.add(channel_name, msg)
+            try:
+                await db.insert_message(self._pool, msg)
+            except Exception as exc:
+                print(f"Crawler: DB insert failed during backfill for {channel_name}: {exc}")
         print(f"Crawler: backfill complete for {channel} ({self._buffer.total_size()} messages)")
