@@ -1,5 +1,5 @@
 # Use a specific digest for immutability and slim for small size
-FROM python:3.11-slim as builder
+FROM python:3.11-slim AS builder
 
 # Set environment variables to optimize Python for containers
 ENV PYTHONDONTWRITEBYTECODE=1 \
@@ -15,21 +15,20 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 
 COPY requirements.txt .
 
-# Install to a local path to keep the final image clean
-RUN pip install --upgrade pip && \
-    pip install --no-cache-dir --user -r requirements.txt
+# Install into a virtualenv so the final stage can copy a single known path
+RUN python -m venv /venv && \
+    /venv/bin/pip install --upgrade pip && \
+    /venv/bin/pip install --no-cache-dir -r requirements.txt
 
 # Final Stage
 FROM python:3.11-slim
 
 WORKDIR /app
 
-# Copy only the installed site-packages and the app code
-COPY --from=builder /root/.local /root/.local
+# Copy the virtualenv from builder and the app code
+COPY --from=builder /venv /venv
 COPY . .
 
-# Update PATH to include the local pip installs
-ENV PATH=/root/.local/bin:$PATH
 ENV PYTHONUNBUFFERED=1
 
 # Use a non-root user for security (OWASP Best Practice)
@@ -38,4 +37,4 @@ RUN useradd -m botuser && chown -R botuser /app
 USER botuser
 
 # The -u flag is critical for cloud logging
-CMD ["python", "-u", "main.py"]
+CMD ["/venv/bin/python", "-u", "main.py"]
