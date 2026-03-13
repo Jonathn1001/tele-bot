@@ -12,6 +12,7 @@ The bot currently has no access control — any Telegram user who discovers it c
 - Only the owner's Telegram account can trigger any bot command.
 - Unauthorized users receive no response (silent drop).
 - The owner ID is configurable via environment variable, not hardcoded in source.
+- `OWNER_ID` is **required** — the bot will fail to start at import time if it is not set.
 
 ## Design
 
@@ -19,29 +20,30 @@ The bot currently has no access control — any Telegram user who discovers it c
 
 Add `OWNER_ID` to the environment variable set:
 
-- `config.py`: `OWNER_ID = int(os.environ["OWNER_ID"])`
-- `.env.example`: `OWNER_ID=<your_telegram_user_id>`
-- `.env`: set to the owner's actual numeric Telegram user ID (not committed)
+- `config.py`: `OWNER_ID = int(os.environ["OWNER_ID"])` — required, no default, raises `KeyError` at startup if missing (consistent with other required vars like `DATABASE_URL`).
+- `.env.example`: create this new file (does not currently exist) documenting all env vars including `OWNER_ID=<your_telegram_user_id>`.
+- `.env`: add the owner's actual numeric Telegram user ID (not committed to git).
 
 ### Middleware
 
-Add `OwnerOnlyMiddleware(BaseMiddleware)` in `bot.py`. It is registered on the router inside `build_dispatcher()` and runs before every message handler.
+Add `OwnerOnlyMiddleware(BaseMiddleware)` in `bot.py`. The registration line `router.message.middleware(OwnerOnlyMiddleware())` is placed **inside the `build_dispatcher()` function body**, before `dp.include_router(router)`, keeping all setup co-located.
 
 Logic:
-1. Read `message.from_user.id`.
-2. If it equals `config.OWNER_ID`, call the next handler.
+1. Check `message.from_user`. If it is `None` (e.g., anonymous channel post), treat as unauthorized — silently drop.
+2. If `message.from_user.id` equals `config.OWNER_ID`, call the next handler.
 3. Otherwise, return without calling the handler — no reply is sent.
 
-This ensures all current and future commands are automatically protected without modifying individual handlers.
+This ensures all current and future commands handled by the router are automatically protected without modifying individual handlers.
 
 ### Files Changed
 
 | File | Change |
 |---|---|
-| `config.py` | Add `OWNER_ID = int(os.environ["OWNER_ID"])` |
-| `.env.example` | Add `OWNER_ID=<your_telegram_user_id>` |
-| `bot.py` | Add `OwnerOnlyMiddleware` class + register on router |
-| `.env` | Add owner's actual numeric Telegram user ID |
+| `config.py` | Add `OWNER_ID = int(os.environ["OWNER_ID"])` (required) |
+| `.env.example` | **Create** new file documenting all env vars including `OWNER_ID=<your_telegram_user_id>` |
+| `bot.py` | Add `OwnerOnlyMiddleware` class + register via `router.message.middleware(OwnerOnlyMiddleware())` |
+| `.env` | Add `OWNER_ID=<actual numeric ID>` (not committed) |
+| `CLAUDE.md` | Add `OWNER_ID` row to the Configuration table |
 
 ## Trade-offs Considered
 
