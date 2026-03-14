@@ -10,6 +10,7 @@ os.environ.setdefault("TELEGRAM_API_HASH", "0" * 32)
 os.environ.setdefault("BOT_TOKEN", "123456789:AABBCCDDEEFFaabbccddeeff12345678901")
 os.environ.setdefault("GEMINI_API_KEY", "dummy-key")
 os.environ.setdefault("DATABASE_URL", "postgresql://dummy:dummy@localhost:5432/dummy")
+os.environ.setdefault("OWNER_ID", "5730878656")
 
 
 def test_bot_created_with_default_properties():
