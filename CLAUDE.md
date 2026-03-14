@@ -51,6 +51,7 @@ All config is read from environment variables (via `.env` + `python-dotenv`):
 | `TELEGRAM_API_ID` | Yes | — | From my.telegram.org |
 | `TELEGRAM_API_HASH` | Yes | — |From my.telegram.org |
 | `BOT_TOKEN` | Yes | — | From @BotFather |
+| `OWNER_ID` | Yes | — | Numeric Telegram user ID of the bot owner (find via @userinfobot) |
 | `GEMINI_API_KEY` | Yes | — | From Google AI Studio |
 | `CHANNELS` | Yes | `""` | Comma-separated channel usernames to monitor |
 | `BUFFER_SIZE` | No | `100` | Max messages stored per channel |
@@ -58,6 +59,7 @@ All config is read from environment variables (via `.env` + `python-dotenv`):
 | `DATABASE_URL` | Yes | — | Aiven PostgreSQL connection string |
 | `RETENTION_DAYS` | No | `30` | Days to keep archived messages (min 1) |
 | `PRUNE_INTERVAL_HOURS` | No | `24` | How often to run pruner in hours (min 1) |
+| `SESSION_STRING` | No | `""` | Telethon session string (alternative to `session.session` file) |
 
 Copy `.env.example` to `.env` and fill in values before running.
 
@@ -75,5 +77,5 @@ Copy `.env.example` to `.env` and fill in values before running.
 
 - **In-memory analysis buffer:** Buffer is in-memory only and is the sole source for all analysis commands. Lost on restart.
 - **PostgreSQL archive:** Live messages (not backfill) are asynchronously archived to Aiven PostgreSQL via `db.py`. Fire-and-forget — DB failures are silently discarded.
-- **No access control:** Any user who finds the bot can query it.
+- **Owner-only access:** All bot commands are restricted to the `OWNER_ID` account via `OwnerOnlyMiddleware`. Messages from all other users are silently dropped.
 - **Response chunking:** `bot.py` splits LLM responses into 4096-char chunks (Telegram's message limit).
