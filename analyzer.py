@@ -39,7 +39,8 @@ async def summarize(messages: list[Message]) -> str:
     return await _ask(
         "You are an intelligence analyst. Extract the 5 most significant events or "
         "developments from these Telegram messages. Be concise and factual. "
-        "Format as a numbered list.",
+        "Format as a numbered list. "
+        "Respond in both English and Vietnamese. Label each section clearly — 'English:' then 'Tiếng Việt:'",
         messages,
     )
 
@@ -48,7 +49,8 @@ async def assess_threat(messages: list[Message]) -> str:
     return await _ask(
         "Assess the overall threat level and conflict risk based on these Telegram messages. "
         "Rate overall severity 1–5 (1=low, 5=critical). "
-        "Explain the top 3 indicators driving your assessment. Be direct.",
+        "Explain the top 3 indicators driving your assessment. Be direct. "
+        "Respond in both English and Vietnamese. Label each section clearly — 'English:' then 'Tiếng Việt:'",
         messages,
     )
 
@@ -60,9 +62,10 @@ async def fact_check(claim: str, messages: list[Message]) -> str:
         f'"{claim}"\n\n'
         "Cross-reference this claim using BOTH the Telegram channel messages below AND "
         "your Google Search grounding to find current, authoritative information.\n\n"
-        "Start your response with one of: SUPPORTED / CONTRADICTED / INSUFFICIENT EVIDENCE. "
+        "Start each language section with one of: SUPPORTED / CONTRADICTED / INSUFFICIENT EVIDENCE. "
         "Then provide a 2-3 sentence explanation citing both channel evidence (channel + timestamp) "
-        "and external sources where relevant.\n\n"
+        "and external sources where relevant. "
+        "Respond in both English and Vietnamese. Label each section clearly — 'English:' then 'Tiếng Việt:'\n\n"
         f"Channel messages:\n\n{context}"
     )
     try:

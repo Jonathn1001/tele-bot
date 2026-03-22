@@ -103,3 +103,41 @@ async def test_generate_content_called_once_per_call():
     with patch.object(analyzer, "_client", mock_client):
         await analyzer.summarize(msgs)
     mock_client.models.generate_content.assert_called_once()
+
+
+# ---------------------------------------------------------------------------
+# Bilingual prompts — each function must include the bilingual instruction
+# ---------------------------------------------------------------------------
+
+# Full canonical instruction as required by spec — includes the section label requirement
+BILINGUAL_INSTRUCTION = "Respond in both English and Vietnamese. Label each section clearly — 'English:' then 'Tiếng Việt:'"
+
+
+async def test_summarize_prompt_is_bilingual():
+    msgs = _make_msgs("Event A")
+    mock_client = _mock_client("ok")
+    with patch.object(analyzer, "_client", mock_client):
+        await analyzer.summarize(msgs)
+    prompt = mock_client.models.generate_content.call_args[1]["contents"]
+    assert BILINGUAL_INSTRUCTION in prompt
+
+
+async def test_assess_threat_prompt_is_bilingual():
+    msgs = _make_msgs("threat msg")
+    mock_client = _mock_client("ok")
+    with patch.object(analyzer, "_client", mock_client):
+        await analyzer.assess_threat(msgs)
+    prompt = mock_client.models.generate_content.call_args[1]["contents"]
+    assert BILINGUAL_INSTRUCTION in prompt
+
+
+async def test_fact_check_prompt_is_bilingual():
+    msgs = _make_msgs("Event A")
+    mock_client = _mock_client("SUPPORTED\nok")
+    with patch.object(analyzer, "_client", mock_client):
+        await analyzer.fact_check("some claim", msgs)
+    prompt = mock_client.models.generate_content.call_args[1]["contents"]
+    assert BILINGUAL_INSTRUCTION in prompt
+    # Verify verdict instruction was updated to place verdict inside each language section
+    assert "Start each language section with one of:" in prompt
+    assert "Start your response with one of:" not in prompt
