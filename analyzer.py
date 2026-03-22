@@ -40,7 +40,7 @@ async def summarize(messages: list[Message]) -> str:
         "You are an intelligence analyst. Extract the 5 most significant events or "
         "developments from these Telegram messages. Be concise and factual. "
         "Format as a numbered list. "
-        "Respond in both English and Vietnamese. Label each section clearly — 'English:' then 'Tiếng Việt:'",
+        "Respond in both English and Vietnamese. Label each section clearly — 'English:' then 'Tiếng Việt:'.",
         messages,
     )
 
@@ -50,7 +50,7 @@ async def assess_threat(messages: list[Message]) -> str:
         "Assess the overall threat level and conflict risk based on these Telegram messages. "
         "Rate overall severity 1–5 (1=low, 5=critical). "
         "Explain the top 3 indicators driving your assessment. Be direct. "
-        "Respond in both English and Vietnamese. Label each section clearly — 'English:' then 'Tiếng Việt:'",
+        "Respond in both English and Vietnamese. Label each section clearly — 'English:' then 'Tiếng Việt:'.",
         messages,
     )
 
