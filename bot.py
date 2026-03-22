@@ -26,7 +26,7 @@ def _split(text: str, limit: int = 4096) -> list[str]:
 
 async def _reply_analysis(message: TgMessage, result: str) -> None:
     for chunk in _split(result):
-        await message.answer(chunk)
+        await message.answer(chunk, parse_mode=None)
 
 
 @router.message(Command("start"))
