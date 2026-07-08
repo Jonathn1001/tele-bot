@@ -23,6 +23,10 @@ async def init_pool(dsn: str, ca_cert: str = "") -> asyncpg.Pool:
                 created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
             )
         """)
+        # Pruner deletes by created_at; without this every prune is a full table scan.
+        await conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_messages_created_at ON messages (created_at)"
+        )
     return pool
 
 
