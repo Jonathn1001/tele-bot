@@ -58,3 +58,62 @@ def test_middleware_registered_on_router():
         if isinstance(m, bot.OwnerOnlyMiddleware)
     ]
     assert len(registered) == 1
+
+
+# ---------------------------------------------------------------------------
+# RateLimitMiddleware
+# ---------------------------------------------------------------------------
+
+def _make_command_message(user_id: int, text: str) -> MagicMock:
+    msg = _make_message(user_id)
+    msg.text = text
+    msg.answer = AsyncMock()
+    return msg
+
+
+async def test_rate_limit_allows_first_analysis_call():
+    middleware = bot.RateLimitMiddleware(cooldown_seconds=15)
+    handler = AsyncMock()
+    msg = _make_command_message(config.OWNER_ID, "/summary")
+    await middleware(handler, msg, {})
+    handler.assert_called_once()
+
+
+async def test_rate_limit_blocks_second_call_within_cooldown():
+    middleware = bot.RateLimitMiddleware(cooldown_seconds=15)
+    handler = AsyncMock()
+    first = _make_command_message(config.OWNER_ID, "/summary")
+    second = _make_command_message(config.OWNER_ID, "/threat")
+    await middleware(handler, first, {})
+    await middleware(handler, second, {})
+    handler.assert_called_once()  # second call dropped
+    second.answer.assert_called_once()
+    assert "wait" in second.answer.call_args[0][0].lower()
+
+
+async def test_rate_limit_ignores_non_analysis_commands():
+    middleware = bot.RateLimitMiddleware(cooldown_seconds=15)
+    handler = AsyncMock()
+    for text in ("/start", "/channels", "/summary"):
+        await middleware(handler, _make_command_message(config.OWNER_ID, text), {})
+    assert handler.call_count == 3  # /start and /channels never throttled
+
+
+async def test_rate_limit_disabled_when_zero():
+    middleware = bot.RateLimitMiddleware(cooldown_seconds=0)
+    handler = AsyncMock()
+    for _ in range(3):
+        await middleware(handler, _make_command_message(config.OWNER_ID, "/summary"), {})
+    assert handler.call_count == 3
+
+
+async def test_rate_limit_allows_after_cooldown_expiry():
+    middleware = bot.RateLimitMiddleware(cooldown_seconds=15)
+    handler = AsyncMock()
+    msg1 = _make_command_message(config.OWNER_ID, "/summary")
+    msg2 = _make_command_message(config.OWNER_ID, "/summary")
+    await middleware(handler, msg1, {})
+    # simulate cooldown passed
+    middleware._last_call[config.OWNER_ID] -= 16
+    await middleware(handler, msg2, {})
+    assert handler.call_count == 2

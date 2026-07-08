@@ -11,6 +11,7 @@ OWNER_ID = int(os.environ["OWNER_ID"])
 
 CHANNELS = [ch.strip() for ch in os.environ.get("CHANNELS", "").split(",") if ch.strip()]
 BUFFER_SIZE = int(os.environ.get("BUFFER_SIZE", "100"))
+RATE_LIMIT_SECONDS = max(0, int(os.environ.get("RATE_LIMIT_SECONDS", "15")))  # cooldown between analysis commands; 0 disables
 MAX_CONTEXT_MESSAGES = int(os.environ.get("MAX_CONTEXT_MESSAGES", "50"))
 SESSION_STRING = os.environ.get("SESSION_STRING", "")
 

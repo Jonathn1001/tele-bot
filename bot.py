@@ -1,4 +1,5 @@
 from collections.abc import Awaitable, Callable
+from time import monotonic
 from typing import Any
 
 from aiogram import BaseMiddleware, Bot, Dispatcher, Router
@@ -24,8 +25,39 @@ class OwnerOnlyMiddleware(BaseMiddleware):
         return await handler(event, data)
 
 
+# Commands that trigger a paid Gemini API call — these get a cooldown.
+ANALYSIS_COMMANDS = ("/summary", "/threat", "/factcheck")
+
+
+class RateLimitMiddleware(BaseMiddleware):
+    """Cooldown between analysis commands so a runaway client can't drain the Gemini quota."""
+
+    def __init__(self, cooldown_seconds: int) -> None:
+        self._cooldown = cooldown_seconds
+        self._last_call: dict[int, float] = {}
+
+    async def __call__(
+        self,
+        handler: Callable[[TelegramObject, dict[str, Any]], Awaitable[Any]],
+        event: TelegramObject,
+        data: dict[str, Any],
+    ) -> Any:
+        text = getattr(event, "text", None) or ""
+        if self._cooldown <= 0 or not text.startswith(ANALYSIS_COMMANDS):
+            return await handler(event, data)
+        now = monotonic()
+        last = self._last_call.get(event.from_user.id)
+        if last is not None and now - last < self._cooldown:
+            wait = int(self._cooldown - (now - last)) + 1
+            await event.answer(f"Rate limit: please wait {wait}s before the next analysis.")
+            return
+        self._last_call[event.from_user.id] = now
+        return await handler(event, data)
+
+
 router = Router()
 router.message.middleware(OwnerOnlyMiddleware())
+router.message.middleware(RateLimitMiddleware(config.RATE_LIMIT_SECONDS))
 _buffer: MessageBuffer | None = None
 MAX_CLAIM_LENGTH = 500
 

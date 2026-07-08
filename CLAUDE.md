@@ -56,6 +56,7 @@ All config is read from environment variables (via `.env` + `python-dotenv`):
 | `CHANNELS` | Yes | `""` | Comma-separated channel usernames to monitor |
 | `SESSION_STRING` | No | `""` | Telethon session string (alternative to `session.session` file) |
 | `BUFFER_SIZE` | No | `100` | Max messages stored per channel |
+| `RATE_LIMIT_SECONDS` | No | `15` | Cooldown between analysis commands (`0` disables) |
 | `MAX_CONTEXT_MESSAGES` | No | `50` | Max messages sent to LLM per analysis |
 | `DATABASE_URL` | Yes | — | Aiven PostgreSQL connection string |
 | `DATABASE_CA_CERT` | No | `""` | Path to Aiven CA cert (`ca.pem`); enables full TLS verification, else falls back to unverified `require` |
