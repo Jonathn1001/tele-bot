@@ -7,3 +7,5 @@ __pycache__/
 .venv/
 tel-bot.pem
 .worktrees
+tele_bot_env/
+security_best_practices_report.md
