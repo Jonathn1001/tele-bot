@@ -6,6 +6,7 @@ os.environ.setdefault("TELEGRAM_API_HASH", "dummy_hash")
 os.environ.setdefault("BOT_TOKEN", "0:AADummy")
 os.environ.setdefault("GEMINI_API_KEY", "dummy_key")
 os.environ.setdefault("DATABASE_URL", "postgresql://dummy:dummy@localhost:5432/dummy")
+os.environ.setdefault("OWNER_ID", "5730878656")
 
 import pytest
 from unittest.mock import AsyncMock, patch
@@ -165,3 +166,13 @@ async def test_factcheck_calls_analyzer_and_replies():
     mock_fn.assert_called_once()
     all_texts = [c[0][0] for c in msg.answer.call_args_list]
     assert any("SUPPORTED" in t for t in all_texts)
+
+
+# ---------------------------------------------------------------------------
+# config.OWNER_ID
+# ---------------------------------------------------------------------------
+
+def test_config_owner_id_is_integer():
+    import config
+    assert isinstance(config.OWNER_ID, int)
+    assert config.OWNER_ID == int(os.environ["OWNER_ID"])

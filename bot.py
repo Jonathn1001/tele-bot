@@ -1,13 +1,31 @@
-from aiogram import Bot, Dispatcher, Router
+from collections.abc import Awaitable, Callable
+from typing import Any
+
+from aiogram import BaseMiddleware, Bot, Dispatcher, Router
 from aiogram.enums import ParseMode
 from aiogram.filters import Command, CommandObject
 from aiogram.types import Message as TgMessage
+from aiogram.types import TelegramObject
 
 import analyzer
 import config
 from buffer import MessageBuffer
 
+
+class OwnerOnlyMiddleware(BaseMiddleware):
+    async def __call__(
+        self,
+        handler: Callable[[TelegramObject, dict[str, Any]], Awaitable[Any]],
+        event: TelegramObject,
+        data: dict[str, Any],
+    ) -> Any:
+        if event.from_user is None or event.from_user.id != config.OWNER_ID:
+            return
+        return await handler(event, data)
+
+
 router = Router()
+router.message.middleware(OwnerOnlyMiddleware())
 _buffer: MessageBuffer | None = None
 MAX_CLAIM_LENGTH = 500
 

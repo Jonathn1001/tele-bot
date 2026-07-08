@@ -52,7 +52,9 @@ All config is read from environment variables (via `.env` + `python-dotenv`):
 | `TELEGRAM_API_HASH` | Yes | — |From my.telegram.org |
 | `BOT_TOKEN` | Yes | — | From @BotFather |
 | `GEMINI_API_KEY` | Yes | — | From Google AI Studio |
+| `OWNER_ID` | Yes | — | Numeric Telegram user ID of the bot owner (find via @userinfobot) |
 | `CHANNELS` | Yes | `""` | Comma-separated channel usernames to monitor |
+| `SESSION_STRING` | No | `""` | Telethon session string (alternative to `session.session` file) |
 | `BUFFER_SIZE` | No | `100` | Max messages stored per channel |
 | `MAX_CONTEXT_MESSAGES` | No | `50` | Max messages sent to LLM per analysis |
 | `DATABASE_URL` | Yes | — | Aiven PostgreSQL connection string |
@@ -75,5 +77,5 @@ Copy `.env.example` to `.env` and fill in values before running.
 
 - **In-memory analysis buffer:** Buffer is in-memory only and is the sole source for all analysis commands. Lost on restart.
 - **PostgreSQL archive:** Live messages (not backfill) are asynchronously archived to Aiven PostgreSQL via `db.py`. Fire-and-forget — DB failures are silently discarded.
-- **No access control:** Any user who finds the bot can query it.
+- **Owner-only access:** `OwnerOnlyMiddleware` in `bot.py` silently drops messages from any user whose ID is not `OWNER_ID`.
 - **Response chunking:** `bot.py` splits LLM responses into 4096-char chunks (Telegram's message limit).
