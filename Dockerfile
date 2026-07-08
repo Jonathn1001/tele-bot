@@ -1,5 +1,6 @@
-# Use a specific digest for immutability and slim for small size
-FROM python:3.11-slim AS builder
+# Digest-pinned for immutability; 3.12 matches local dev and CI.
+# Refresh digest deliberately: docker buildx imagetools inspect python:3.12-slim
+FROM python:3.12-slim@sha256:423ed6ab25b1921a477529254bfeeabf5855151dc2c3141699a1bfc852199fbf AS builder
 
 # Set environment variables to optimize Python for containers
 ENV PYTHONDONTWRITEBYTECODE=1 \
@@ -21,7 +22,7 @@ RUN python -m venv /venv && \
     /venv/bin/pip install --no-cache-dir -r requirements.txt
 
 # Final Stage
-FROM python:3.11-slim
+FROM python:3.12-slim@sha256:423ed6ab25b1921a477529254bfeeabf5855151dc2c3141699a1bfc852199fbf
 
 WORKDIR /app
 
