@@ -12,7 +12,7 @@ from crawler import TelegramCrawler
 
 
 async def main() -> None:
-    pool = await db.init_pool(config.DATABASE_URL)
+    pool = await db.init_pool(config.DATABASE_URL, config.DATABASE_CA_CERT)
     buffer = MessageBuffer(maxsize=config.BUFFER_SIZE)
     crawler = TelegramCrawler(buffer, pool)
     bot = Bot(

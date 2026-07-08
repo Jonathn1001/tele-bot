@@ -1,9 +1,17 @@
+import ssl
+
 import asyncpg
 from buffer import Message
 
 
-async def init_pool(dsn: str) -> asyncpg.Pool:
-    pool = await asyncpg.create_pool(dsn, ssl="require")
+async def init_pool(dsn: str, ca_cert: str = "") -> asyncpg.Pool:
+    if ca_cert:
+        # Verifies the server certificate and hostname (verify-full);
+        # plain ssl="require" encrypts but is open to MITM.
+        ssl_ctx: ssl.SSLContext | str = ssl.create_default_context(cafile=ca_cert)
+    else:
+        ssl_ctx = "require"
+    pool = await asyncpg.create_pool(dsn, ssl=ssl_ctx)
     async with pool.acquire() as conn:
         await conn.execute("""
             CREATE TABLE IF NOT EXISTS messages (

@@ -58,6 +58,7 @@ All config is read from environment variables (via `.env` + `python-dotenv`):
 | `BUFFER_SIZE` | No | `100` | Max messages stored per channel |
 | `MAX_CONTEXT_MESSAGES` | No | `50` | Max messages sent to LLM per analysis |
 | `DATABASE_URL` | Yes | — | Aiven PostgreSQL connection string |
+| `DATABASE_CA_CERT` | No | `""` | Path to Aiven CA cert (`ca.pem`); enables full TLS verification, else falls back to unverified `require` |
 | `RETENTION_DAYS` | No | `30` | Days to keep archived messages (min 1) |
 | `PRUNE_INTERVAL_HOURS` | No | `24` | How often to run pruner in hours (min 1) |
 
