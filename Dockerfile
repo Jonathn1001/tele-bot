@@ -25,9 +25,11 @@ FROM python:3.11-slim
 
 WORKDIR /app
 
-# Copy the virtualenv from builder and the app code
+# Copy the virtualenv from builder and only the app source.
+# Explicit COPY (plus .dockerignore) keeps secrets like .env, session files
+# and SSH keys out of image layers.
 COPY --from=builder /venv /venv
-COPY . .
+COPY *.py ./
 
 ENV PYTHONUNBUFFERED=1
 

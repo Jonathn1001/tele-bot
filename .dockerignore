@@ -1,0 +1,25 @@
+# Secrets and credentials — must never enter image layers
+.env
+.env.*
+*.session
+*.session-journal
+*.pem
+
+# Virtual environments
+.venv/
+tele_bot_env/
+
+# Git, docs, tests — not needed at runtime
+.git/
+.gitignore
+docs/
+tests/
+pytest.ini
+requirements-dev.txt
+*.md
+
+# Local artifacts
+__pycache__/
+*.py[cod]
+.worktrees/
+.scratch/
