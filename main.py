@@ -15,7 +15,7 @@ logger = logging.getLogger(__name__)
 
 
 async def main() -> None:
-    pool = await db.init_pool(config.DATABASE_URL, config.DATABASE_CA_CERT)
+    pool = await db.init_pool(config.DATABASE_URL, config.DATABASE_CA_CERT, config.DATABASE_SSL)
     buffer = MessageBuffer(maxsize=config.BUFFER_SIZE)
     crawler = TelegramCrawler(buffer, pool)
     bot = Bot(

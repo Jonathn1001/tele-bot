@@ -17,5 +17,6 @@ SESSION_STRING = os.environ.get("SESSION_STRING", "")
 
 DATABASE_URL = os.environ["DATABASE_URL"]
 DATABASE_CA_CERT = os.environ.get("DATABASE_CA_CERT", "")  # path to CA cert (e.g. Aiven ca.pem); enables full TLS verification
+DATABASE_SSL = os.environ.get("DATABASE_SSL", "require")   # "require" (default) or "disable" for local/sidecar Postgres
 RETENTION_DAYS = max(1, int(os.environ.get("RETENTION_DAYS", "30")))        # minimum 1 day
 PRUNE_INTERVAL_HOURS = max(1, int(os.environ.get("PRUNE_INTERVAL_HOURS", "24")))  # minimum 1 hour

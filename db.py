@@ -4,11 +4,15 @@ import asyncpg
 from buffer import Message
 
 
-async def init_pool(dsn: str, ca_cert: str = "") -> asyncpg.Pool:
+async def init_pool(dsn: str, ca_cert: str = "", ssl_mode: str = "require") -> asyncpg.Pool:
+    ssl_ctx: ssl.SSLContext | str | bool
     if ca_cert:
         # Verifies the server certificate and hostname (verify-full);
         # plain ssl="require" encrypts but is open to MITM.
-        ssl_ctx: ssl.SSLContext | str = ssl.create_default_context(cafile=ca_cert)
+        ssl_ctx = ssl.create_default_context(cafile=ca_cert)
+    elif ssl_mode == "disable":
+        # For a Postgres on the same host/compose network (no TLS endpoint).
+        ssl_ctx = False
     else:
         ssl_ctx = "require"
     pool = await asyncpg.create_pool(dsn, ssl=ssl_ctx)
