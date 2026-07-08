@@ -1,4 +1,5 @@
 import asyncio
+import logging
 
 from google import genai
 from google.genai import types
@@ -6,7 +7,13 @@ from google.genai import types
 import config
 from buffer import Message
 
+logger = logging.getLogger(__name__)
+
 _client = genai.Client(api_key=config.GEMINI_API_KEY)
+
+# Generic reply for users; real exception goes to the log only so internal
+# details (project IDs, quota info, endpoints) never reach Telegram chats.
+ANALYSIS_FAILED_REPLY = "Analysis failed. Please try again later."
 
 
 def _format_messages(messages: list[Message]) -> str:
@@ -31,8 +38,9 @@ async def _ask(system: str, messages: list[Message]) -> str:
             ),
         )
         return response.text
-    except Exception as exc:
-        return f"Analysis failed: {exc}"
+    except Exception:
+        logger.exception("Gemini request failed")
+        return ANALYSIS_FAILED_REPLY
 
 
 async def summarize(messages: list[Message]) -> str:
@@ -78,5 +86,6 @@ async def fact_check(claim: str, messages: list[Message]) -> str:
             ),
         )
         return response.text
-    except Exception as exc:
-        return f"Analysis failed: {exc}"
+    except Exception:
+        logger.exception("Gemini fact-check request failed")
+        return ANALYSIS_FAILED_REPLY

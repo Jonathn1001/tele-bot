@@ -45,25 +45,27 @@ async def test_assess_threat_returns_model_text():
 
 
 # ---------------------------------------------------------------------------
-# generate_content raises — result starts with "Analysis failed:"
+# generate_content raises — user gets generic reply, exception detail stays out
 # ---------------------------------------------------------------------------
 
-async def test_summarize_failure_returns_error_string():
+async def test_summarize_failure_returns_generic_error():
     msgs = _make_msgs("msg")
     mock_client = MagicMock()
     mock_client.models.generate_content.side_effect = RuntimeError("API error")
     with patch.object(analyzer, "_client", mock_client):
         result = await analyzer.summarize(msgs)
-    assert result.startswith("Analysis failed:")
+    assert result == analyzer.ANALYSIS_FAILED_REPLY
+    assert "API error" not in result
 
 
-async def test_assess_threat_failure_returns_error_string():
+async def test_assess_threat_failure_returns_generic_error():
     msgs = _make_msgs("msg")
     mock_client = MagicMock()
     mock_client.models.generate_content.side_effect = RuntimeError("API error")
     with patch.object(analyzer, "_client", mock_client):
         result = await analyzer.assess_threat(msgs)
-    assert result.startswith("Analysis failed:")
+    assert result == analyzer.ANALYSIS_FAILED_REPLY
+    assert "API error" not in result
 
 
 async def test_fact_check_returns_model_text():
@@ -73,13 +75,14 @@ async def test_fact_check_returns_model_text():
     assert result == "SUPPORTED\nEvidence found."
 
 
-async def test_fact_check_failure_returns_error_string():
+async def test_fact_check_failure_returns_generic_error():
     msgs = _make_msgs("msg")
     mock_client = MagicMock()
     mock_client.models.generate_content.side_effect = RuntimeError("API error")
     with patch.object(analyzer, "_client", mock_client):
         result = await analyzer.fact_check("some claim", msgs)
-    assert result.startswith("Analysis failed:")
+    assert result == analyzer.ANALYSIS_FAILED_REPLY
+    assert "API error" not in result
 
 
 async def test_fact_check_calls_generate_content_with_search_tool():
