@@ -1,4 +1,5 @@
 import asyncio
+import logging
 
 from telethon import TelegramClient, events
 from telethon.sessions import StringSession
@@ -6,6 +7,8 @@ from telethon.sessions import StringSession
 import config
 import db
 from buffer import Message, MessageBuffer
+
+logger = logging.getLogger(__name__)
 
 
 class TelegramCrawler:
@@ -43,14 +46,14 @@ class TelegramCrawler:
             self._buffer.add(channel_name, msg)
             def _on_done(t: asyncio.Task, ch: str = channel_name) -> None:
                 if not t.cancelled() and t.exception():
-                    print(f"Crawler: DB insert failed for {ch}: {t.exception()}")
+                    logger.error("Crawler: DB insert failed for %s: %s", ch, t.exception())
             asyncio.create_task(db.insert_message(self._pool, msg)).add_done_callback(_on_done)
 
-        print(f"Crawler: monitoring {channels}")
+        logger.info("Crawler: monitoring %s", channels)
         await self._client.run_until_disconnected()
 
     async def _backfill(self, channel: str) -> None:
-        print(f"Crawler: backfilling {channel}...")
+        logger.info("Crawler: backfilling %s...", channel)
         async for message in self._client.iter_messages(channel, limit=config.BUFFER_SIZE):
             if not message.text:
                 continue
@@ -65,6 +68,6 @@ class TelegramCrawler:
             self._buffer.add(channel_name, msg)
             try:
                 await db.insert_message(self._pool, msg)
-            except Exception as exc:
-                print(f"Crawler: DB insert failed during backfill for {channel_name}: {exc}")
-        print(f"Crawler: backfill complete for {channel} ({self._buffer.total_size()} messages)")
+            except Exception:
+                logger.exception("Crawler: DB insert failed during backfill for %s", channel_name)
+        logger.info("Crawler: backfill complete for %s (%d messages)", channel, self._buffer.total_size())

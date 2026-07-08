@@ -1,4 +1,5 @@
 import asyncio
+import logging
 
 from aiogram import Bot
 from aiogram.client.default import DefaultBotProperties
@@ -9,6 +10,8 @@ import db
 from bot import build_dispatcher
 from buffer import MessageBuffer
 from crawler import TelegramCrawler
+
+logger = logging.getLogger(__name__)
 
 
 async def main() -> None:
@@ -26,10 +29,10 @@ async def main() -> None:
             await asyncio.sleep(config.PRUNE_INTERVAL_HOURS * 3600)
             try:
                 await db.prune_old_messages(pool, config.RETENTION_DAYS)
-            except Exception as exc:
-                print(f"Pruner: error during prune: {exc}")
+            except Exception:
+                logger.exception("Pruner: error during prune")
 
-    print("Starting Telegram Intel Bot...")
+    logger.info("Starting Telegram Intel Bot...")
     await asyncio.gather(
         crawler.start(config.CHANNELS),
         dp.start_polling(bot),
@@ -38,4 +41,8 @@ async def main() -> None:
 
 
 if __name__ == "__main__":
+    logging.basicConfig(
+        level=logging.INFO,
+        format="%(asctime)s %(levelname)s %(name)s: %(message)s",
+    )
     asyncio.run(main())
