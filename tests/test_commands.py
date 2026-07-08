@@ -54,7 +54,7 @@ async def test_channels_empty_buffer():
     msg = _mock_msg()
     with patch.object(bot, "_buffer", None):
         await bot.cmd_channels(msg)
-    msg.answer.assert_called_once_with("No messages collected yet.")
+    msg.answer.assert_called_once_with(bot.EMPTY_BUFFER_REPLY)
 
 
 async def test_channels_populated_buffer():
@@ -79,7 +79,7 @@ async def test_analysis_empty_buffer(cmd_fn):
     msg = _mock_msg()
     with patch.object(bot, "_buffer", None):
         await cmd_fn(msg)
-    msg.answer.assert_called_once_with("No messages collected yet. Please wait a moment.")
+    msg.answer.assert_called_once_with(bot.EMPTY_BUFFER_REPLY)
 
 
 # ---------------------------------------------------------------------------
@@ -90,14 +90,16 @@ async def test_analysis_empty_buffer(cmd_fn):
     (bot.cmd_summary,   "summarize"),
     (bot.cmd_threat,    "assess_threat"),
 ])
-async def test_analysis_sends_analyzing_first(cmd_fn, analyzer_fn):
+async def test_analysis_sends_status_first(cmd_fn, analyzer_fn):
     msg = _mock_msg()
     buf = _make_buffer("test message")
     with patch.object(bot, "_buffer", buf), \
          patch(f"analyzer.{analyzer_fn}", new=AsyncMock(return_value="mocked result")):
         await cmd_fn(msg)
     first_call_text = msg.answer.call_args_list[0][0][0]
-    assert first_call_text == "Analyzing..."
+    # status message tells the user what's happening and mentions message count
+    assert "1 message" in first_call_text
+    assert "…" in first_call_text
 
 
 @pytest.mark.parametrize("cmd_fn,analyzer_fn", [
@@ -128,7 +130,10 @@ async def test_factcheck_no_claim_returns_usage():
     buf = _make_buffer("some message")
     with patch.object(bot, "_buffer", buf):
         await bot.cmd_factcheck(msg, cmd)
-    msg.answer.assert_called_once_with("Usage: /factcheck <your claim>")
+    msg.answer.assert_called_once()
+    usage_text = msg.answer.call_args[0][0]
+    assert usage_text.startswith("Usage: /factcheck <your claim>")
+    assert "Example:" in usage_text
 
 
 async def test_factcheck_claim_too_long_returns_error():
@@ -150,7 +155,7 @@ async def test_factcheck_empty_buffer_returns_no_messages():
     cmd.args = "Russia attacked Ukraine"
     with patch.object(bot, "_buffer", None):
         await bot.cmd_factcheck(msg, cmd)
-    msg.answer.assert_called_once_with("No messages collected yet. Please wait a moment.")
+    msg.answer.assert_called_once_with(bot.EMPTY_BUFFER_REPLY)
 
 
 async def test_factcheck_calls_analyzer_and_replies():

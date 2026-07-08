@@ -58,6 +58,11 @@ class RateLimitMiddleware(BaseMiddleware):
 router = Router()
 router.message.middleware(OwnerOnlyMiddleware())
 router.message.middleware(RateLimitMiddleware(config.RATE_LIMIT_SECONDS))
+
+EMPTY_BUFFER_REPLY = (
+    "No messages collected yet — the crawler may still be backfilling. "
+    "Try again in a minute."
+)
 _buffer: MessageBuffer | None = None
 MAX_CLAIM_LENGTH = 500
 
@@ -83,12 +88,14 @@ async def _reply_analysis(message: TgMessage, result: str) -> None:
 async def cmd_start(message: TgMessage) -> None:
     await message.answer(
         "*Telegram Intel Bot*\n\n"
-        "I monitor political and military news channels and provide AI-powered analysis.\n\n"
-        "Commands:\n"
-        "/summary — Key events from recent messages\n"
-        "/factcheck <claim> — Verify a claim against channel messages + web sources\n"
-        "/threat — Conflict risk assessment\n"
-        "/channels — Monitored channels status",
+        "I monitor political and military news channels and provide AI-powered analysis on demand.\n\n"
+        "*Commands*\n"
+        "/summary — Top 5 significant events from recent messages\n"
+        "/threat — Conflict risk assessment (1–5 scale)\n"
+        "/factcheck <claim> — Verify a claim against channels + web sources\n"
+        "      e.g. `/factcheck Russia closed the border today`\n"
+        "/channels — Monitored channels and message counts\n\n"
+        "Analysis replies are bilingual: English + Tiếng Việt.",
         parse_mode=ParseMode.MARKDOWN,
     )
 
@@ -96,12 +103,12 @@ async def cmd_start(message: TgMessage) -> None:
 @router.message(Command("channels"))
 async def cmd_channels(message: TgMessage) -> None:
     if _buffer is None or _buffer.is_empty():
-        await message.answer("No messages collected yet.")
+        await message.answer(EMPTY_BUFFER_REPLY)
         return
     sizes = _buffer.channel_sizes()
-    lines = [f"• `{ch}`: {n} messages" for ch, n in sizes.items()]
+    lines = [f"• `{ch}` — {n} messages" for ch, n in sizes.items()]
     await message.answer(
-        f"*Monitored channels* ({_buffer.total_size()} total):\n" + "\n".join(lines),
+        f"📡 *Monitored channels* — {_buffer.total_size()} messages buffered:\n" + "\n".join(lines),
         parse_mode=ParseMode.MARKDOWN,
     )
 
@@ -109,10 +116,10 @@ async def cmd_channels(message: TgMessage) -> None:
 @router.message(Command("summary"))
 async def cmd_summary(message: TgMessage) -> None:
     if _buffer is None or _buffer.is_empty():
-        await message.answer("No messages collected yet. Please wait a moment.")
+        await message.answer(EMPTY_BUFFER_REPLY)
         return
-    await message.answer("Analyzing...")
     msgs = _buffer.get_all(limit=config.MAX_CONTEXT_MESSAGES)
+    await message.answer(f"📋 Summarizing the last {len(msgs)} messages… (~10s)")
     result = await analyzer.summarize(msgs)
     await _reply_analysis(message, result)
 
@@ -121,10 +128,10 @@ async def cmd_summary(message: TgMessage) -> None:
 @router.message(Command("threat"))
 async def cmd_threat(message: TgMessage) -> None:
     if _buffer is None or _buffer.is_empty():
-        await message.answer("No messages collected yet. Please wait a moment.")
+        await message.answer(EMPTY_BUFFER_REPLY)
         return
-    await message.answer("Analyzing...")
     msgs = _buffer.get_all(limit=config.MAX_CONTEXT_MESSAGES)
+    await message.answer(f"⚠️ Assessing threat level from the last {len(msgs)} messages… (~10s)")
     result = await analyzer.assess_threat(msgs)
     await _reply_analysis(message, result)
 
@@ -133,15 +140,18 @@ async def cmd_threat(message: TgMessage) -> None:
 async def cmd_factcheck(message: TgMessage, command: CommandObject) -> None:
     claim = (command.args or "").strip()
     if not claim:
-        await message.answer("Usage: /factcheck <your claim>")
+        await message.answer(
+            "Usage: /factcheck <your claim>\n"
+            "Example: /factcheck Russia closed the border today"
+        )
         return
     if len(claim) > MAX_CLAIM_LENGTH:
         await message.answer(f"Claim too long. Please keep it under {MAX_CLAIM_LENGTH} characters.")
         return
     if _buffer is None or _buffer.is_empty():
-        await message.answer("No messages collected yet. Please wait a moment.")
+        await message.answer(EMPTY_BUFFER_REPLY)
         return
-    await message.answer("Analyzing...")
     msgs = _buffer.get_all(limit=config.MAX_CONTEXT_MESSAGES)
+    await message.answer(f"🔎 Fact-checking against {len(msgs)} channel messages + web sources… (~20s)")
     result = await analyzer.fact_check(claim, msgs)
     await _reply_analysis(message, result)

@@ -15,6 +15,14 @@ _client = genai.Client(api_key=config.GEMINI_API_KEY)
 # details (project IDs, quota info, endpoints) never reach Telegram chats.
 ANALYSIS_FAILED_REPLY = "Analysis failed. Please try again later."
 
+# Replies are sent with parse_mode=None (raw LLM Markdown breaks Telegram
+# entity parsing), so ask the model for plain-text-friendly formatting.
+PLAIN_TEXT_FORMAT_INSTRUCTION = (
+    "Format for plain-text Telegram: no Markdown syntax (no *, _, #, backticks). "
+    "Use '•' for bullets and short paragraphs. Separate the English and Vietnamese "
+    "sections with a divider line of ── characters."
+)
+
 # Channel posts and user claims are attacker-controllable; without this
 # separation a hostile post could steer the analysis output.
 UNTRUSTED_DATA_NOTICE = (
@@ -57,7 +65,8 @@ async def summarize(messages: list[Message]) -> str:
         "You are an intelligence analyst. Extract the 5 most significant events or "
         "developments from these Telegram messages. Be concise and factual. "
         "Format as a numbered list. "
-        "Respond in both English and Vietnamese. Label each section clearly — 'English:' then 'Tiếng Việt:'.",
+        "Respond in both English and Vietnamese. Label each section clearly — 'English:' then 'Tiếng Việt:'. "
+        f"{PLAIN_TEXT_FORMAT_INSTRUCTION}",
         messages,
     )
 
@@ -67,7 +76,8 @@ async def assess_threat(messages: list[Message]) -> str:
         "Assess the overall threat level and conflict risk based on these Telegram messages. "
         "Rate overall severity 1–5 (1=low, 5=critical). "
         "Explain the top 3 indicators driving your assessment. Be direct. "
-        "Respond in both English and Vietnamese. Label each section clearly — 'English:' then 'Tiếng Việt:'.",
+        "Respond in both English and Vietnamese. Label each section clearly — 'English:' then 'Tiếng Việt:'. "
+        f"{PLAIN_TEXT_FORMAT_INSTRUCTION}",
         messages,
     )
 
@@ -83,7 +93,8 @@ async def fact_check(claim: str, messages: list[Message]) -> str:
         "Start each language section with one of: SUPPORTED / CONTRADICTED / INSUFFICIENT EVIDENCE. "
         "Then provide a 2-3 sentence explanation citing both channel evidence (channel + timestamp) "
         "and external sources where relevant. "
-        "Respond in both English and Vietnamese. Label each section clearly — 'English:' then 'Tiếng Việt:'"
+        "Respond in both English and Vietnamese. Label each section clearly — 'English:' then 'Tiếng Việt:' "
+        f"{PLAIN_TEXT_FORMAT_INSTRUCTION}"
     )
     contents = (
         f"<claim>\n{claim}\n</claim>\n\n"
