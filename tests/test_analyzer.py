@@ -110,10 +110,15 @@ async def test_generate_content_called_once_per_call():
 
 # ---------------------------------------------------------------------------
 # Bilingual prompts — each function must include the bilingual instruction
+# (instructions live in system_instruction; contents carries only data)
 # ---------------------------------------------------------------------------
 
 # Full canonical instruction as required by spec — includes the section label requirement
 BILINGUAL_INSTRUCTION = "Respond in both English and Vietnamese. Label each section clearly — 'English:' then 'Tiếng Việt:'"
+
+
+def _system_instruction(mock_client: MagicMock) -> str:
+    return mock_client.models.generate_content.call_args[1]["config"].system_instruction
 
 
 async def test_summarize_prompt_is_bilingual():
@@ -121,8 +126,7 @@ async def test_summarize_prompt_is_bilingual():
     mock_client = _mock_client("ok")
     with patch.object(analyzer, "_client", mock_client):
         await analyzer.summarize(msgs)
-    prompt = mock_client.models.generate_content.call_args[1]["contents"]
-    assert BILINGUAL_INSTRUCTION in prompt
+    assert BILINGUAL_INSTRUCTION in _system_instruction(mock_client)
 
 
 async def test_assess_threat_prompt_is_bilingual():
@@ -130,8 +134,7 @@ async def test_assess_threat_prompt_is_bilingual():
     mock_client = _mock_client("ok")
     with patch.object(analyzer, "_client", mock_client):
         await analyzer.assess_threat(msgs)
-    prompt = mock_client.models.generate_content.call_args[1]["contents"]
-    assert BILINGUAL_INSTRUCTION in prompt
+    assert BILINGUAL_INSTRUCTION in _system_instruction(mock_client)
 
 
 async def test_fact_check_prompt_is_bilingual():
@@ -139,8 +142,43 @@ async def test_fact_check_prompt_is_bilingual():
     mock_client = _mock_client("SUPPORTED\nok")
     with patch.object(analyzer, "_client", mock_client):
         await analyzer.fact_check("some claim", msgs)
-    prompt = mock_client.models.generate_content.call_args[1]["contents"]
-    assert BILINGUAL_INSTRUCTION in prompt
+    system = _system_instruction(mock_client)
+    assert BILINGUAL_INSTRUCTION in system
     # Verify verdict instruction was updated to place verdict inside each language section
-    assert "Start each language section with one of:" in prompt
-    assert "Start your response with one of:" not in prompt
+    assert "Start each language section with one of:" in system
+    assert "Start your response with one of:" not in system
+
+
+# ---------------------------------------------------------------------------
+# Prompt-injection hardening — untrusted data is delimited and separated
+# from instructions
+# ---------------------------------------------------------------------------
+
+async def test_summarize_contents_is_delimited_data_only():
+    msgs = _make_msgs("Event A")
+    mock_client = _mock_client("ok")
+    with patch.object(analyzer, "_client", mock_client):
+        await analyzer.summarize(msgs)
+    contents = mock_client.models.generate_content.call_args[1]["contents"]
+    assert contents.startswith("<channel_messages>")
+    assert contents.endswith("</channel_messages>")
+    assert "Event A" in contents
+    assert BILINGUAL_INSTRUCTION not in contents  # instructions never mix with data
+
+
+async def test_fact_check_claim_is_delimited():
+    msgs = _make_msgs("Event A")
+    mock_client = _mock_client("SUPPORTED\nok")
+    with patch.object(analyzer, "_client", mock_client):
+        await analyzer.fact_check("some claim", msgs)
+    contents = mock_client.models.generate_content.call_args[1]["contents"]
+    assert "<claim>\nsome claim\n</claim>" in contents
+    assert "<channel_messages>" in contents
+
+
+async def test_system_instruction_marks_data_untrusted():
+    msgs = _make_msgs("Event A")
+    mock_client = _mock_client("ok")
+    with patch.object(analyzer, "_client", mock_client):
+        await analyzer.summarize(msgs)
+    assert analyzer.UNTRUSTED_DATA_NOTICE in _system_instruction(mock_client)
