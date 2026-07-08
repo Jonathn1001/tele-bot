@@ -31,3 +31,37 @@ jobs:
         run: pip install pip-audit
       - name: Audit dependencies for known vulnerabilities
         run: pip-audit -r requirements.txt
+
+  # CD: push to main -> build image -> Docker Hub -> SSH to EC2 -> pull + restart.
+  # Skipped until the DEPLOY_ENABLED repo variable is "true" (Settings -> Variables),
+  # so CI stays green while secrets are not yet configured.
+  build-push:
+    if: github.event_name == 'push' && vars.DEPLOY_ENABLED == 'true'
+    needs: [test, audit]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Log in to Docker Hub
+        run: echo "${{ secrets.DOCKERHUB_TOKEN }}" | docker login -u "${{ secrets.DOCKERHUB_USERNAME }}" --password-stdin
+      - name: Build and push image
+        run: |
+          IMAGE="${{ secrets.DOCKERHUB_USERNAME }}/tele-bot"
+          docker build -t "$IMAGE:latest" -t "$IMAGE:${{ github.sha }}" .
+          docker push "$IMAGE:latest"
+          docker push "$IMAGE:$GITHUB_SHA"
+
+  deploy:
+    needs: build-push
+    runs-on: ubuntu-latest
+    steps:
+      - name: Pull and restart on EC2 over SSH
+        env:
+          SSH_KEY: ${{ secrets.EC2_SSH_KEY }}
+          HOST: ${{ secrets.EC2_HOST }}
+        run: |
+          mkdir -p ~/.ssh
+          echo "$SSH_KEY" > ~/.ssh/deploy_key
+          chmod 600 ~/.ssh/deploy_key
+          ssh-keyscan -H "$HOST" >> ~/.ssh/known_hosts 2>/dev/null
+          ssh -i ~/.ssh/deploy_key "ec2-user@$HOST" \
+            "cd ~/telegram-intel-bot && docker compose pull && docker compose up -d && docker image prune -f"
