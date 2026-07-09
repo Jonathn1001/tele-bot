@@ -20,3 +20,7 @@ DATABASE_CA_CERT = os.environ.get("DATABASE_CA_CERT", "")  # path to CA cert (e.
 DATABASE_SSL = os.environ.get("DATABASE_SSL", "require")   # "require" (default) or "disable" for local/sidecar Postgres
 RETENTION_DAYS = max(1, int(os.environ.get("RETENTION_DAYS", "30")))        # minimum 1 day
 PRUNE_INTERVAL_HOURS = max(1, int(os.environ.get("PRUNE_INTERVAL_HOURS", "24")))  # minimum 1 hour
+
+# Scheduled digest fire times, Asia/Ho_Chi_Minh ("HH:MM[,HH:MM...]"). Empty string disables.
+HN_DIGEST_TIMES = os.environ.get("HN_DIGEST_TIMES", "08:30,20:00")
+PRESS_DIGEST_TIMES = os.environ.get("PRESS_DIGEST_TIMES", "07:00")

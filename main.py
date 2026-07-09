@@ -5,11 +5,15 @@ from aiogram import Bot
 from aiogram.client.default import DefaultBotProperties
 from aiogram.enums import ParseMode
 
+import analyzer
 import config
 import db
-from bot import build_dispatcher
+import hn
+import vn_news
+from bot import build_dispatcher, send_to_owner
 from buffer import MessageBuffer
 from crawler import TelegramCrawler
+from scheduler import Job, parse_times, run_scheduler
 
 logger = logging.getLogger(__name__)
 
@@ -32,11 +36,27 @@ async def main() -> None:
             except Exception:
                 logger.exception("Pruner: error during prune")
 
+    async def hn_job() -> None:
+        stories = await hn.fetch_security_stories()
+        text = await analyzer.hn_digest(stories)
+        await send_to_owner(bot, f"🔐 HN Security Digest\n\n{text}")
+
+    async def press_job() -> None:
+        headlines = await vn_news.fetch_headlines()
+        text = await analyzer.press_digest(headlines)
+        await send_to_owner(bot, f"📰 Điểm báo sáng\n\n{text}")
+
+    jobs: list[Job] = [
+        *((t, "hn_digest", hn_job) for t in parse_times(config.HN_DIGEST_TIMES)),
+        *((t, "press_digest", press_job) for t in parse_times(config.PRESS_DIGEST_TIMES)),
+    ]
+
     logger.info("Starting Telegram Intel Bot...")
     await asyncio.gather(
         crawler.start(config.CHANNELS),
         dp.start_polling(bot),
         pruner(),
+        run_scheduler(jobs),
     )
 
 

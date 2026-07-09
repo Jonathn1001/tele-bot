@@ -1,3 +1,4 @@
+import logging
 from collections.abc import Awaitable, Callable
 from time import monotonic
 from typing import Any
@@ -10,7 +11,11 @@ from aiogram.types import TelegramObject
 
 import analyzer
 import config
+import hn
+import vn_news
 from buffer import MessageBuffer
+
+logger = logging.getLogger(__name__)
 
 
 class OwnerOnlyMiddleware(BaseMiddleware):
@@ -26,7 +31,7 @@ class OwnerOnlyMiddleware(BaseMiddleware):
 
 
 # Commands that trigger a paid Gemini API call — these get a cooldown.
-ANALYSIS_COMMANDS = ("/summary", "/threat", "/factcheck")
+ANALYSIS_COMMANDS = ("/summary", "/threat", "/factcheck", "/hn", "/paper")
 
 
 class RateLimitMiddleware(BaseMiddleware):
@@ -84,6 +89,12 @@ async def _reply_analysis(message: TgMessage, result: str) -> None:
         await message.answer(chunk, parse_mode=None)
 
 
+async def send_to_owner(bot: Bot, text: str) -> None:
+    """Push a scheduled digest to the owner, chunked to Telegram's limit."""
+    for chunk in _split(text):
+        await bot.send_message(config.OWNER_ID, chunk, parse_mode=None)
+
+
 @router.message(Command("start"))
 async def cmd_start(message: TgMessage) -> None:
     await message.answer(
@@ -94,7 +105,10 @@ async def cmd_start(message: TgMessage) -> None:
         "/threat — Conflict risk assessment (1–5 scale)\n"
         "/factcheck <claim> — Verify a claim against channels + web sources\n"
         "      e.g. `/factcheck Russia closed the border today`\n"
+        "/hn — Security stories on Hacker News right now\n"
+        "/paper — Điểm báo: Vietnamese press review (VnExpress, Tuổi Trẻ, Thanh Niên)\n"
         "/channels — Monitored channels and message counts\n\n"
+        "Scheduled pushes: HN security digest 08:30 & 20:00, điểm báo 07:00 (VN time).\n"
         "Analysis replies are bilingual: English + Tiếng Việt.",
         parse_mode=ParseMode.MARKDOWN,
     )
@@ -133,6 +147,27 @@ async def cmd_threat(message: TgMessage) -> None:
     msgs = _buffer.get_all(limit=config.MAX_CONTEXT_MESSAGES)
     await message.answer(f"⚠️ Assessing threat level from the last {len(msgs)} messages… (~10s)")
     result = await analyzer.assess_threat(msgs)
+    await _reply_analysis(message, result)
+
+
+@router.message(Command("hn"))
+async def cmd_hn(message: TgMessage) -> None:
+    await message.answer("🔐 Fetching security stories from Hacker News… (~20s)")
+    try:
+        stories = await hn.fetch_security_stories()
+    except Exception:
+        logger.exception("HN fetch failed")
+        await message.answer(analyzer.ANALYSIS_FAILED_REPLY)
+        return
+    result = await analyzer.hn_digest(stories)
+    await _reply_analysis(message, result)
+
+
+@router.message(Command("paper"))
+async def cmd_paper(message: TgMessage) -> None:
+    await message.answer("📰 Đang soạn điểm báo từ VnExpress, Tuổi Trẻ, Thanh Niên… (~30s)")
+    headlines = await vn_news.fetch_headlines()
+    result = await analyzer.press_digest(headlines)
     await _reply_analysis(message, result)
 
 

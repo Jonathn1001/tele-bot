@@ -42,6 +42,8 @@ Both tasks share the same `MessageBuffer` instance directly via reference (no qu
 
 **Dual Telegram identity:** The system uses two separate Telegram connections simultaneously — Telethon (MTProto, user account) to read channels, and aiogram (Bot API) to respond to users.
 
+**Scheduled digests:** `scheduler.py` runs as a fourth `asyncio.gather()` task and fires jobs at fixed `Asia/Ho_Chi_Minh` times: `hn.py` (Algolia HN API, keyword-filtered security stories) at `HN_DIGEST_TIMES`, and `vn_news.py` (VnExpress/Tuổi Trẻ/Thanh Niên RSS, stdlib XML parsing) at `PRESS_DIGEST_TIMES`. Digests are Gemini-composed in `analyzer.py` (`hn_digest`, `press_digest`) and pushed to `OWNER_ID` via `bot.send_to_owner`. Links are appended deterministically by code — the LLM references stories by number and never writes URLs. voz.vn was the original press-digest source but is Cloudflare-blocked server-side; official newspaper RSS replaced it.
+
 ## Configuration
 
 All config is read from environment variables (via `.env` + `python-dotenv`):
@@ -63,6 +65,8 @@ All config is read from environment variables (via `.env` + `python-dotenv`):
 | `DATABASE_SSL` | No | `require` | Set `disable` for a local/sidecar Postgres with no TLS endpoint |
 | `RETENTION_DAYS` | No | `30` | Days to keep archived messages (min 1) |
 | `PRUNE_INTERVAL_HOURS` | No | `24` | How often to run pruner in hours (min 1) |
+| `HN_DIGEST_TIMES` | No | `08:30,20:00` | HN security digest push times, Asia/Ho_Chi_Minh (empty disables) |
+| `PRESS_DIGEST_TIMES` | No | `07:00` | Vietnamese press digest push times, Asia/Ho_Chi_Minh (empty disables) |
 
 Copy `.env.example` to `.env` and fill in values before running.
 
@@ -75,6 +79,8 @@ Copy `.env.example` to `.env` and fill in values before running.
 | `/summary` | Top 5 significant events |
 | `/factcheck <claim>` | Cross-check a claim against channel messages + Google Search |
 | `/threat` | Conflict risk assessment (1–5 scale) |
+| `/hn` | Current security stories from Hacker News |
+| `/paper` | Điểm báo — Vietnamese press review (VnExpress, Tuổi Trẻ, Thanh Niên) |
 
 ## Key Constraints
 
