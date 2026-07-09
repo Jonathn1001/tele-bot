@@ -42,7 +42,7 @@ Both tasks share the same `MessageBuffer` instance directly via reference (no qu
 
 **Dual Telegram identity:** The system uses two separate Telegram connections simultaneously — Telethon (MTProto, user account) to read channels, and aiogram (Bot API) to respond to users.
 
-**Scheduled digests:** `scheduler.py` runs as a fourth `asyncio.gather()` task and fires jobs at fixed `Asia/Ho_Chi_Minh` times: `hn.py` (Algolia HN API, keyword-filtered security stories) at `HN_DIGEST_TIMES`, and `vn_news.py` (VnExpress/Tuổi Trẻ/Thanh Niên RSS, stdlib XML parsing) at `PRESS_DIGEST_TIMES`. Digests are Gemini-composed in `analyzer.py` (`hn_digest`, `press_digest`) and pushed to `OWNER_ID` via `bot.send_to_owner`. Links are appended deterministically by code — the LLM references stories by number and never writes URLs. voz.vn was the original press-digest source but is Cloudflare-blocked server-side; official newspaper RSS replaced it.
+**Scheduled digests:** `scheduler.py` runs as a fourth `asyncio.gather()` task and fires jobs at fixed `Asia/Ho_Chi_Minh` times: `hn.py` (Algolia HN API, keyword-filtered security stories) at `HN_DIGEST_TIMES`, and `voz.py` (voz.vn `f/diem-bao.33` subforum RSS — one thread per curated news article) at `PRESS_DIGEST_TIMES`. Digests are Gemini-composed in `analyzer.py` (`hn_digest`, `press_digest`) and pushed to `OWNER_ID` via `bot.send_to_owner`. Links are appended deterministically by code — the LLM references stories by number and never writes URLs. voz.vn sits behind Cloudflare, so `voz.py` fetches through `cloudscraper` (sync, wrapped in `asyncio.to_thread`); if Cloudflare hardens its challenge, the fetch fails soft (empty digest + logged exception) rather than crashing the bot.
 
 ## Configuration
 
@@ -80,7 +80,7 @@ Copy `.env.example` to `.env` and fill in values before running.
 | `/factcheck <claim>` | Cross-check a claim against channel messages + Google Search |
 | `/threat` | Conflict risk assessment (1–5 scale) |
 | `/hn` | Current security stories from Hacker News |
-| `/paper` | Điểm báo — Vietnamese press review (VnExpress, Tuổi Trẻ, Thanh Niên) |
+| `/paper` | Điểm báo — press review from voz.vn f/Điểm báo |
 
 ## Key Constraints
 

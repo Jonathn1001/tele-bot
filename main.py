@@ -9,7 +9,7 @@ import analyzer
 import config
 import db
 import hn
-import vn_news
+import voz
 from bot import build_dispatcher, send_to_owner
 from buffer import MessageBuffer
 from crawler import TelegramCrawler
@@ -42,9 +42,9 @@ async def main() -> None:
         await send_to_owner(bot, f"🔐 HN Security Digest\n\n{text}")
 
     async def press_job() -> None:
-        headlines = await vn_news.fetch_headlines()
+        headlines = await voz.fetch_headlines()
         text = await analyzer.press_digest(headlines)
-        await send_to_owner(bot, f"📰 Điểm báo sáng\n\n{text}")
+        await send_to_owner(bot, f"📰 Điểm báo sáng (voz)\n\n{text}")
 
     jobs: list[Job] = [
         *((t, "hn_digest", hn_job) for t in parse_times(config.HN_DIGEST_TIMES)),

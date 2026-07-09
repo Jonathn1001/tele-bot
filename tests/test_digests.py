@@ -16,7 +16,7 @@ from unittest.mock import AsyncMock, patch
 import analyzer
 import bot
 import hn
-import vn_news
+import voz
 from scheduler import VN_TZ, next_run, parse_times
 
 
@@ -98,16 +98,19 @@ def test_filter_skips_untitled():
 
 
 # ---------------------------------------------------------------------------
-# vn_news RSS parsing
+# voz Điểm báo RSS parsing
 # ---------------------------------------------------------------------------
 
 SAMPLE_RSS = """<?xml version="1.0" encoding="utf-8"?>
-<rss version="2.0"><channel>
-  <title>VnExpress</title>
+<rss version="2.0" xmlns:content="http://purl.org/rss/1.0/modules/content/"
+     xmlns:slash="http://purl.org/rss/1.0/modules/slash/">
+<channel>
+  <title>Điểm báo</title>
   <item>
     <title>Tin thứ nhất</title>
-    <link>https://vnexpress.net/tin-1.html</link>
-    <description><![CDATA[<img src="x.jpg"/> Mô tả &amp; chi tiết]]></description>
+    <link>https://voz.vn/t/tin-1.111/?utm_source=rss&amp;utm_medium=rss</link>
+    <content:encoded><![CDATA[<div><blockquote>Mô tả &amp;   chi tiết</blockquote></div>]]></content:encoded>
+    <slash:comments>42</slash:comments>
     <pubDate>Wed, 09 Jul 2026 06:00:00 +0700</pubDate>
   </item>
   <item>
@@ -116,28 +119,41 @@ SAMPLE_RSS = """<?xml version="1.0" encoding="utf-8"?>
   </item>
   <item>
     <title>Tin thứ hai</title>
-    <link>https://vnexpress.net/tin-2.html</link>
+    <link>https://voz.vn/t/tin-2.222/</link>
   </item>
 </channel></rss>"""
 
 
 def test_parse_feed_extracts_items():
-    headlines = vn_news.parse_feed(SAMPLE_RSS, "VnExpress")
+    headlines = voz.parse_feed(SAMPLE_RSS)
     assert [h.title for h in headlines] == ["Tin thứ nhất", "Tin thứ hai"]
 
 
-def test_parse_feed_strips_html_and_unescapes():
-    h = vn_news.parse_feed(SAMPLE_RSS, "VnExpress")[0]
-    assert h.summary == "Mô tả & chi tiết"
+def test_parse_feed_strips_tracking_params():
+    assert voz.parse_feed(SAMPLE_RSS)[0].url == "https://voz.vn/t/tin-1.111/"
+
+
+def test_parse_feed_strips_html_and_collapses_whitespace():
+    assert voz.parse_feed(SAMPLE_RSS)[0].summary == "Mô tả & chi tiết"
+
+
+def test_parse_feed_reads_comment_count():
+    headlines = voz.parse_feed(SAMPLE_RSS)
+    assert headlines[0].comments == 42 and headlines[1].comments == 0
 
 
 def test_parse_feed_parses_pubdate():
-    h = vn_news.parse_feed(SAMPLE_RSS, "VnExpress")[0]
+    h = voz.parse_feed(SAMPLE_RSS)[0]
     assert h.published is not None and h.published.hour == 6
 
 
-def test_parse_feed_per_feed_cap():
-    assert len(vn_news.parse_feed(SAMPLE_RSS, "VnExpress", per_feed=1)) == 1
+def test_parse_feed_limit():
+    assert len(voz.parse_feed(SAMPLE_RSS, limit=1)) == 1
+
+
+async def test_fetch_headlines_survives_cloudflare_failure():
+    with patch.object(voz, "_fetch_sync", side_effect=RuntimeError("403 challenge")):
+        assert await voz.fetch_headlines() == []
 
 
 # ---------------------------------------------------------------------------
@@ -161,13 +177,13 @@ async def test_press_digest_empty():
     assert await analyzer.press_digest([]) == analyzer.NO_HEADLINES_REPLY
 
 
-async def test_press_digest_numbers_sources():
-    headlines = [vn_news.Headline(source="VnExpress", title="Tin A",
-                                  url="https://vnexpress.net/a", summary="tóm tắt")]
+async def test_press_digest_numbers_items():
+    headlines = [voz.Headline(title="Tin A", url="https://voz.vn/t/a.1/",
+                              summary="tóm tắt", comments=7)]
     with patch.object(analyzer, "_ask", new=AsyncMock(return_value="điểm báo")) as ask:
         result = await analyzer.press_digest(headlines)
-    assert "https://vnexpress.net/a" in result
-    assert "[VnExpress] Tin A" in ask.call_args.kwargs["raw_contents"]
+    assert "https://voz.vn/t/a.1/" in result
+    assert "Tin A — tóm tắt (7 bình luận)" in ask.call_args.kwargs["raw_contents"]
 
 
 # ---------------------------------------------------------------------------
@@ -197,7 +213,7 @@ async def test_cmd_hn_fetch_failure_is_sanitized():
 
 async def test_cmd_paper_replies_with_digest():
     msg = _mock_msg()
-    with patch.object(bot.vn_news, "fetch_headlines", new=AsyncMock(return_value=[])), \
+    with patch.object(bot.voz, "fetch_headlines", new=AsyncMock(return_value=[])), \
          patch.object(bot.analyzer, "press_digest", new=AsyncMock(return_value="điểm báo")):
         await bot.cmd_paper(msg)
     assert msg.answer.call_count == 2

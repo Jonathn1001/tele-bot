@@ -7,7 +7,7 @@ from google.genai import types
 import config
 from buffer import Message
 from hn import Story
-from vn_news import Headline
+from voz import Headline
 
 logger = logging.getLogger(__name__)
 
@@ -94,7 +94,7 @@ NO_HN_STORIES_REPLY = (
     "Không có tin bảo mật đáng chú ý trên Hacker News trong khung giờ này."
 )
 
-NO_HEADLINES_REPLY = "Không lấy được tin từ các báo — thử lại sau."
+NO_HEADLINES_REPLY = "Không lấy được tin từ voz Điểm báo — thử lại sau."
 
 
 async def hn_digest(stories: list[Story]) -> str:
@@ -123,24 +123,26 @@ async def hn_digest(stories: list[Story]) -> str:
 
 
 async def press_digest(headlines: list[Headline]) -> str:
-    """Vietnamese morning press review ('điểm báo') from official newspaper RSS."""
+    """Vietnamese morning press review from the voz.vn 'Điểm báo' subforum."""
     if not headlines:
         return NO_HEADLINES_REPLY
     numbered = "\n".join(
-        f"{i}. [{h.source}] {h.title} — {h.summary}"
+        f"{i}. {h.title} — {h.summary} ({h.comments} bình luận)"
         for i, h in enumerate(headlines, 1)
     )
     overview = await _ask(
-        "Bạn là biên tập viên soạn mục 'Điểm báo' buổi sáng. Từ các tin đánh số dưới đây, "
-        "chọn 8-12 tin quan trọng nhất, nhóm theo chuyên mục (Thời sự, Thế giới, Kinh tế, "
-        "Công nghệ, ...). Mỗi tin một dòng tóm tắt ngắn gọn, ghi kèm số thứ tự như (#5) "
-        "và tên báo. Không viết URL. Chỉ trả lời bằng tiếng Việt. "
+        "Bạn là biên tập viên soạn mục 'Điểm báo' buổi sáng từ các bài mới nhất trên "
+        "diễn đàn voz. Từ các tin đánh số dưới đây, chọn 8-12 tin quan trọng nhất "
+        "(ưu tiên tin thời sự lớn và tin nhiều bình luận), nhóm theo chuyên mục "
+        "(Thời sự, Thế giới, Kinh tế, Công nghệ, ...). Mỗi tin một dòng tóm tắt "
+        "ngắn gọn, ghi kèm số thứ tự như (#5). Không viết URL. "
+        "Chỉ trả lời bằng tiếng Việt. "
         f"{PLAIN_TEXT_FORMAT_INSTRUCTION}",
         [],
         raw_contents=f"<press_headlines>\n{numbered}\n</press_headlines>",
     )
     links = "\n".join(f"{i}. {h.url}" for i, h in enumerate(headlines, 1))
-    return f"{overview}\n\n──\nNguồn:\n{links}"
+    return f"{overview}\n\n──\nThảo luận trên voz:\n{links}"
 
 
 async def fact_check(claim: str, messages: list[Message]) -> str:

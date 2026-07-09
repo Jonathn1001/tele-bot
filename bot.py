@@ -12,7 +12,7 @@ from aiogram.types import TelegramObject
 import analyzer
 import config
 import hn
-import vn_news
+import voz
 from buffer import MessageBuffer
 
 logger = logging.getLogger(__name__)
@@ -106,7 +106,7 @@ async def cmd_start(message: TgMessage) -> None:
         "/factcheck <claim> — Verify a claim against channels + web sources\n"
         "      e.g. `/factcheck Russia closed the border today`\n"
         "/hn — Security stories on Hacker News right now\n"
-        "/paper — Điểm báo: Vietnamese press review (VnExpress, Tuổi Trẻ, Thanh Niên)\n"
+        "/paper — Điểm báo: press review from voz.vn f/Điểm báo\n"
         "/channels — Monitored channels and message counts\n\n"
         "Scheduled pushes: HN security digest 08:30 & 20:00, điểm báo 07:00 (VN time).\n"
         "Analysis replies are bilingual: English + Tiếng Việt.",
@@ -165,8 +165,8 @@ async def cmd_hn(message: TgMessage) -> None:
 
 @router.message(Command("paper"))
 async def cmd_paper(message: TgMessage) -> None:
-    await message.answer("📰 Đang soạn điểm báo từ VnExpress, Tuổi Trẻ, Thanh Niên… (~30s)")
-    headlines = await vn_news.fetch_headlines()
+    await message.answer("📰 Đang soạn điểm báo từ voz (f/Điểm báo)… (~30s)")
+    headlines = await voz.fetch_headlines()
     result = await analyzer.press_digest(headlines)
     await _reply_analysis(message, result)
 
