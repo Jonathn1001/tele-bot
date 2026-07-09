@@ -31,7 +31,7 @@ class OwnerOnlyMiddleware(BaseMiddleware):
 
 
 # Commands that trigger a paid Gemini API call — these get a cooldown.
-ANALYSIS_COMMANDS = ("/summary", "/threat", "/factcheck", "/hn", "/paper")
+ANALYSIS_COMMANDS = ("/summary", "/threat", "/factcheck", "/hn", "/paper", "/thread")
 
 
 class RateLimitMiddleware(BaseMiddleware):
@@ -107,6 +107,8 @@ async def cmd_start(message: TgMessage) -> None:
         "      e.g. `/factcheck Russia closed the border today`\n"
         "/hn — Security stories on Hacker News right now\n"
         "/paper — Điểm báo: press review from voz.vn f/Điểm báo\n"
+        "/thread <voz url> — Summarize the recent comments on a voz thread\n"
+        "      e.g. `/thread https://voz.vn/t/abc.123456/`\n"
         "/channels — Monitored channels and message counts\n\n"
         "Scheduled pushes: HN security digest 08:30 & 20:00, điểm báo 07:00 (VN time).\n"
         "Analysis replies are bilingual: English + Tiếng Việt.",
@@ -168,6 +170,27 @@ async def cmd_paper(message: TgMessage) -> None:
     await message.answer("📰 Đang soạn điểm báo từ voz (f/Điểm báo)… (~30s)")
     headlines = await voz.fetch_headlines()
     result = await analyzer.press_digest(headlines)
+    await _reply_analysis(message, result)
+
+
+@router.message(Command("thread"))
+async def cmd_thread(message: TgMessage, command: CommandObject) -> None:
+    url = (command.args or "").strip()
+    if not url:
+        await message.answer(
+            "Usage: /thread <voz thread url>\n"
+            "Example: /thread https://voz.vn/t/abc.123456/"
+        )
+        return
+    if voz.normalize_thread_url(url) is None:
+        await message.answer("Đó không phải link thread voz hợp lệ (cần dạng voz.vn/t/…/).")
+        return
+    await message.answer("🧵 Đang đọc bình luận mới nhất trên thread voz… (~30s)")
+    thread = await voz.fetch_thread(url)
+    if thread is None:
+        await message.answer(analyzer.ANALYSIS_FAILED_REPLY)
+        return
+    result = await analyzer.thread_summary(thread)
     await _reply_analysis(message, result)
 
 

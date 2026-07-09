@@ -5,3 +5,4 @@ python-dotenv==1.2.2
 asyncpg==0.31.0
 tzdata==2026.2
 curl_cffi==0.15.0
+beautifulsoup4==4.15.0

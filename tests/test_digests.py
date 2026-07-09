@@ -187,6 +187,144 @@ async def test_press_digest_numbers_items():
 
 
 # ---------------------------------------------------------------------------
+# voz thread parsing + summary
+# ---------------------------------------------------------------------------
+
+THREAD_HTML = """
+<html><body>
+  <h1 class="p-title-value">Chủ đề thử nghiệm</h1>
+  <nav class="pageNav">
+    <a href="/t/x.9/page-2">2</a>
+    <a href="/t/x.9/page-3">3</a>
+    <a href="/t/x.9/page-5">5</a>
+  </nav>
+  <article class="message message--post" data-author="alice">
+    <div class="message-name"><a class="username">alice</a></div>
+    <div class="message-body"><div class="bbWrapper">
+      <blockquote>trích dẫn người khác</blockquote>
+      Ý kiến của tôi là A
+    </div></div>
+  </article>
+  <article class="message message--post" data-author="bob">
+    <div class="message-name"><a class="username">bob</a></div>
+    <div class="message-body"><div class="bbWrapper">Tôi   không    đồng ý</div></div>
+  </article>
+  <article class="message message--post" data-author="empty">
+    <div class="message-name"><a class="username">empty</a></div>
+    <div class="message-body"><div class="bbWrapper"><blockquote>chỉ có quote</blockquote></div></div>
+  </article>
+</body></html>
+"""
+
+
+def test_parse_thread_page_title_and_last_page():
+    title, last_page, _ = voz.parse_thread_page(THREAD_HTML)
+    assert title == "Chủ đề thử nghiệm"
+    assert last_page == 5
+
+
+def test_parse_thread_page_strips_quotes_and_collapses_ws():
+    _, _, posts = voz.parse_thread_page(THREAD_HTML)
+    assert posts[0].author == "alice"
+    assert posts[0].text == "Ý kiến của tôi là A"
+    assert posts[1].text == "Tôi không đồng ý"
+
+
+def test_parse_thread_page_skips_quote_only_post():
+    _, _, posts = voz.parse_thread_page(THREAD_HTML)
+    # 'empty' had only a quote -> no own words -> dropped
+    assert [p.author for p in posts] == ["alice", "bob"]
+
+
+@pytest.mark.parametrize("url,ok", [
+    ("https://voz.vn/t/abc.123456/", True),
+    ("https://voz.vn/t/abc.123456/page-7", True),
+    ("http://www.voz.vn/t/x.9/", True),
+    ("https://voz.vn/f/diem-bao.33/", False),
+    ("https://evil.com/t/x.1/", False),
+    ("not a url", False),
+])
+def test_normalize_thread_url(url, ok):
+    result = voz.normalize_thread_url(url)
+    assert (result is not None) == ok
+    if ok:
+        assert result.endswith(".123456/") or result.endswith(".9/")
+
+
+async def test_fetch_thread_rejects_non_voz_url():
+    assert await voz.fetch_thread("https://evil.com/t/x.1/") is None
+
+
+async def test_fetch_thread_single_page():
+    import re as _re
+    page = _re.sub(r'<nav class="pageNav">.*?</nav>', "", THREAD_HTML, flags=_re.DOTALL)
+    with patch.object(voz, "_fetch_page_sync", return_value=page) as fetch:
+        thread = await voz.fetch_thread("https://voz.vn/t/x.9/")
+    assert thread is not None
+    assert thread.title == "Chủ đề thử nghiệm"
+    assert [p.author for p in thread.posts] == ["alice", "bob"]
+    assert fetch.call_count == 1  # no pagination -> single fetch
+
+
+async def test_fetch_thread_returns_none_on_fetch_error():
+    with patch.object(voz, "_fetch_page_sync", side_effect=RuntimeError("403")):
+        assert await voz.fetch_thread("https://voz.vn/t/x.9/") is None
+
+
+async def test_thread_summary_empty_posts():
+    thread = voz.Thread(title="T", url="https://voz.vn/t/x.9/", posts=[])
+    assert await analyzer.thread_summary(thread) == analyzer.EMPTY_THREAD_REPLY
+
+
+async def test_thread_summary_wraps_posts_and_titles():
+    thread = voz.Thread(
+        title="Chủ đề X", url="https://voz.vn/t/x.9/",
+        posts=[voz.Post(author="alice", text="quan điểm A")],
+    )
+    with patch.object(analyzer, "_ask", new=AsyncMock(return_value="tóm tắt")) as ask:
+        result = await analyzer.thread_summary(thread)
+    assert "Chủ đề X" in result and "1 bình luận" in result
+    raw = ask.call_args.kwargs["raw_contents"]
+    assert "<thread_posts>" in raw and "[alice]: quan điểm A" in raw
+
+
+async def test_cmd_thread_requires_url():
+    msg = _mock_msg()
+    cmd = type("C", (), {"args": None})()
+    await bot.cmd_thread(msg, cmd)
+    assert "Usage" in msg.answer.call_args[0][0]
+
+
+async def test_cmd_thread_rejects_bad_url():
+    msg = _mock_msg()
+    cmd = type("C", (), {"args": "https://evil.com/t/x.1/"})()
+    await bot.cmd_thread(msg, cmd)
+    assert "voz" in msg.answer.call_args[0][0].lower()
+
+
+async def test_cmd_thread_summarizes():
+    msg = _mock_msg()
+    cmd = type("C", (), {"args": "https://voz.vn/t/x.9/"})()
+    fake = voz.Thread(title="T", url="https://voz.vn/t/x.9/", posts=[voz.Post("a", "b")])
+    with patch.object(bot.voz, "fetch_thread", new=AsyncMock(return_value=fake)), \
+         patch.object(bot.analyzer, "thread_summary", new=AsyncMock(return_value="summary")):
+        await bot.cmd_thread(msg, cmd)
+    assert msg.answer.call_count == 2  # status + summary
+
+
+async def test_cmd_thread_fetch_failure_sanitized():
+    msg = _mock_msg()
+    cmd = type("C", (), {"args": "https://voz.vn/t/x.9/"})()
+    with patch.object(bot.voz, "fetch_thread", new=AsyncMock(return_value=None)):
+        await bot.cmd_thread(msg, cmd)
+    assert msg.answer.call_args[0][0] == analyzer.ANALYSIS_FAILED_REPLY
+
+
+def test_thread_command_is_rate_limited():
+    assert "/thread" in bot.ANALYSIS_COMMANDS
+
+
+# ---------------------------------------------------------------------------
 # commands
 # ---------------------------------------------------------------------------
 
