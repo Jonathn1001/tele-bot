@@ -39,5 +39,10 @@ ENV PYTHONUNBUFFERED=1
 RUN useradd -m botuser && chown -R botuser /app
 USER botuser
 
+# Report unhealthy in `docker ps` when the heartbeat goes stale; the in-process
+# watchdog (health.py) does the actual restart. start-period covers backfill.
+HEALTHCHECK --interval=60s --timeout=10s --start-period=180s --retries=3 \
+    CMD ["/venv/bin/python", "-c", "import health,sys; sys.exit(0 if health.is_fresh() else 1)"]
+
 # The -u flag is critical for cloud logging
 CMD ["/venv/bin/python", "-u", "main.py"]

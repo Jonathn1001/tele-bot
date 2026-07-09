@@ -46,6 +46,10 @@ Both tasks share the same `MessageBuffer` instance directly via reference (no qu
 
 **Thread comment summary:** `/thread <voz url>` → `voz.fetch_thread` reads the latest ~60 posts (last 3 pages of 20; XenForo thread pages are `.../page-N`) and `analyzer.thread_summary` returns a bilingual discussion + sentiment briefing. Post extraction uses BeautifulSoup: author from `.message-name .username`, body from `.message-body .bbWrapper` with `<blockquote>` quotes stripped so each poster's own words are summarized. `voz.THREAD_URL_RE` restricts fetching to `voz.vn/t/<slug>.<id>/` URLs — an SSRF guard against pointing the fetcher at arbitrary hosts.
 
+**Proactive keyword alerts:** `alerts.py` (`AlertMatcher`) compiles `ALERT_KEYWORDS` into a word-boundary, case-insensitive regex. The crawler's *live* message handler (never backfill) matches each message and fires `on_alert` in `main.py`, which pushes `🚨 Alert [keywords] in @channel` to the owner via `send_to_owner`. Empty `ALERT_KEYWORDS` disables it.
+
+**Liveness watchdog:** `health.py` runs a daemon OS thread (survives an asyncio event-loop stall) that `os._exit(1)`s if the heartbeat file goes stale (>180s), so Docker's `restart: unless-stopped` recovers a wedged bot — the failure mode plain restart policies miss. An asyncio `heartbeat()` task in `main.py` refreshes the file every 30s; a `HEALTHCHECK` in the Dockerfile surfaces the same staleness in `docker ps`.
+
 ## Configuration
 
 All config is read from environment variables (via `.env` + `python-dotenv`):
@@ -69,6 +73,8 @@ All config is read from environment variables (via `.env` + `python-dotenv`):
 | `PRUNE_INTERVAL_HOURS` | No | `24` | How often to run pruner in hours (min 1) |
 | `HN_DIGEST_TIMES` | No | `08:30,20:00` | HN security digest push times, Asia/Ho_Chi_Minh (empty disables) |
 | `PRESS_DIGEST_TIMES` | No | `07:00` | Vietnamese press digest push times, Asia/Ho_Chi_Minh (empty disables) |
+| `ALERT_KEYWORDS` | No | conflict/security list | Keywords that trigger a proactive owner alert on live messages (empty disables) |
+| `HEARTBEAT_PATH` | No | `/tmp/heartbeat` | Liveness file path for the watchdog + Docker healthcheck |
 
 Copy `.env.example` to `.env` and fill in values before running.
 

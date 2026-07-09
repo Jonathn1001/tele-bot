@@ -24,3 +24,13 @@ PRUNE_INTERVAL_HOURS = max(1, int(os.environ.get("PRUNE_INTERVAL_HOURS", "24")))
 # Scheduled digest fire times, Asia/Ho_Chi_Minh ("HH:MM[,HH:MM...]"). Empty string disables.
 HN_DIGEST_TIMES = os.environ.get("HN_DIGEST_TIMES", "08:30,20:00")
 PRESS_DIGEST_TIMES = os.environ.get("PRESS_DIGEST_TIMES", "07:00")
+
+# Proactive alerts: push the owner when a live channel message contains any of
+# these keywords/phrases. Comma-separated; empty string disables alerting.
+_DEFAULT_ALERT_KEYWORDS = (
+    "nuclear,mobilization,mobilisation,martial law,invasion,ceasefire,airstrike,"
+    "chemical weapon,evacuation,state of emergency,breaking,escalation,nato"
+)
+ALERT_KEYWORDS = [
+    k.strip() for k in os.environ.get("ALERT_KEYWORDS", _DEFAULT_ALERT_KEYWORDS).split(",") if k.strip()
+]

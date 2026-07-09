@@ -1,5 +1,6 @@
 import asyncio
 import logging
+from collections.abc import Awaitable, Callable
 
 from telethon import TelegramClient, events
 from telethon.sessions import StringSession
@@ -9,6 +10,10 @@ import db
 from buffer import Message, MessageBuffer
 
 logger = logging.getLogger(__name__)
+
+# Called with (message, matched_keywords) for each live message that matches
+# the alert watchlist. Never invoked during backfill.
+AlertCallback = Callable[[Message, list[str]], Awaitable[None]]
 
 
 class TelegramCrawler:
@@ -23,7 +28,12 @@ class TelegramCrawler:
             connection_retries=None,
         )
 
-    async def start(self, channels: list[str]) -> None:
+    async def start(
+        self,
+        channels: list[str],
+        alert_cb: AlertCallback | None = None,
+        alert_matcher=None,
+    ) -> None:
         await self._client.start()
 
         for channel in channels:
@@ -49,8 +59,22 @@ class TelegramCrawler:
                     logger.error("Crawler: DB insert failed for %s: %s", ch, t.exception())
             asyncio.create_task(db.insert_message(self._pool, msg)).add_done_callback(_on_done)
 
+            # Keyword alerts fire only on live messages, never on backfill,
+            # so a restart doesn't replay old alerts.
+            if alert_cb is not None and alert_matcher is not None:
+                hits = alert_matcher.match(msg.text)
+                if hits:
+                    asyncio.create_task(self._safe_alert(alert_cb, msg, hits))
+
         logger.info("Crawler: monitoring %s", channels)
         await self._client.run_until_disconnected()
+
+    @staticmethod
+    async def _safe_alert(alert_cb: AlertCallback, msg: Message, hits: list[str]) -> None:
+        try:
+            await alert_cb(msg, hits)
+        except Exception:
+            logger.exception("Crawler: alert callback failed for %s", msg.channel)
 
     async def _backfill(self, channel: str) -> None:
         logger.info("Crawler: backfilling %s...", channel)

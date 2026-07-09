@@ -8,14 +8,18 @@ from aiogram.enums import ParseMode
 import analyzer
 import config
 import db
+import health
 import hn
 import voz
+from alerts import AlertMatcher
 from bot import build_dispatcher, send_to_owner
-from buffer import MessageBuffer
+from buffer import Message, MessageBuffer
 from crawler import TelegramCrawler
 from scheduler import Job, parse_times, run_scheduler
 
 logger = logging.getLogger(__name__)
+
+HEARTBEAT_INTERVAL = 30  # seconds between liveness pings; watchdog trips at 180s
 
 
 async def main() -> None:
@@ -36,6 +40,22 @@ async def main() -> None:
             except Exception:
                 logger.exception("Pruner: error during prune")
 
+    async def heartbeat() -> None:
+        while True:
+            health.touch()
+            await asyncio.sleep(HEARTBEAT_INTERVAL)
+
+    matcher = AlertMatcher(config.ALERT_KEYWORDS)
+
+    async def on_alert(msg: Message, keywords: list[str]) -> None:
+        kw = ", ".join(keywords)
+        body = msg.text if len(msg.text) <= 1500 else msg.text[:1500] + "…"
+        await send_to_owner(
+            bot,
+            f"🚨 Alert [{kw}] in {msg.channel}\n"
+            f"{msg.date:%Y-%m-%d %H:%M}\n\n{body}",
+        )
+
     async def hn_job() -> None:
         stories = await hn.fetch_security_stories()
         text = await analyzer.hn_digest(stories)
@@ -51,11 +71,17 @@ async def main() -> None:
         *((t, "press_digest", press_job) for t in parse_times(config.PRESS_DIGEST_TIMES)),
     ]
 
+    health.touch()  # seed the heartbeat before the watchdog's grace period starts
+    health.start_watchdog()
+    if matcher.enabled:
+        logger.info("Alerts: watching %d keywords", len(config.ALERT_KEYWORDS))
+
     logger.info("Starting Telegram Intel Bot...")
     await asyncio.gather(
-        crawler.start(config.CHANNELS),
+        crawler.start(config.CHANNELS, alert_cb=on_alert, alert_matcher=matcher),
         dp.start_polling(bot),
         pruner(),
+        heartbeat(),
         run_scheduler(jobs),
     )
 
