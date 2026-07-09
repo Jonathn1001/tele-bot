@@ -81,7 +81,24 @@ def build_dispatcher(buffer: MessageBuffer, bot: Bot) -> Dispatcher:
 
 
 def _split(text: str, limit: int = 4096) -> list[str]:
-    return [text[i : i + limit] for i in range(0, len(text), limit)]
+    """Chunk to Telegram's message limit, preferring paragraph then line breaks
+    so replies don't get cut mid-sentence. Falls back to a hard slice only for a
+    single line longer than the limit."""
+    chunks: list[str] = []
+    remaining = text
+    while len(remaining) > limit:
+        window = remaining[:limit]
+        # Break at the last paragraph gap, else the last line break, else hard-cut.
+        cut = window.rfind("\n\n")
+        if cut == -1:
+            cut = window.rfind("\n")
+        if cut == -1:
+            cut = limit
+        chunks.append(remaining[:cut].rstrip("\n"))
+        remaining = remaining[cut:].lstrip("\n")
+    if remaining:
+        chunks.append(remaining)
+    return chunks
 
 
 async def _reply_analysis(message: TgMessage, result: str) -> None:

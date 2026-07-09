@@ -173,6 +173,16 @@ async def test_hn_digest_appends_real_links():
     assert "<hn_stories>" in ask.call_args.kwargs["raw_contents"]
 
 
+async def test_hn_digest_dedupes_link_for_text_posts():
+    # Ask HN / text posts: url == hn_url, so the discussion link appears once.
+    hn_url = "https://news.ycombinator.com/item?id=9"
+    stories = [hn.Story(title="Ask HN: foo", url=hn_url, points=50,
+                        comments=8, hn_url=hn_url)]
+    with patch.object(analyzer, "_ask", new=AsyncMock(return_value="overview")):
+        result = await analyzer.hn_digest(stories)
+    assert result.count(hn_url) == 1
+
+
 async def test_press_digest_empty():
     assert await analyzer.press_digest([]) == analyzer.NO_HEADLINES_REPLY
 
@@ -322,6 +332,49 @@ async def test_cmd_thread_fetch_failure_sanitized():
 
 def test_thread_command_is_rate_limited():
     assert "/thread" in bot.ANALYSIS_COMMANDS
+
+
+# ---------------------------------------------------------------------------
+# _split — boundary-aware chunking
+# ---------------------------------------------------------------------------
+
+def test_split_short_text_single_chunk():
+    assert bot._split("hello") == ["hello"]
+
+
+def test_split_every_chunk_within_limit():
+    text = "\n\n".join(f"paragraph {i} " + "x" * 300 for i in range(50))
+    chunks = bot._split(text, limit=1000)
+    assert all(len(c) <= 1000 for c in chunks)
+    assert len(chunks) > 1
+
+
+def test_split_prefers_paragraph_boundary():
+    a = "A" * 600
+    b = "B" * 600
+    chunks = bot._split(f"{a}\n\n{b}", limit=1000)
+    # Must break at the blank line, not mid-run: no chunk mixes A and B.
+    assert chunks[0] == a and chunks[1] == b
+
+
+def test_split_falls_back_to_newline():
+    lines = "\n".join("L" * 200 for _ in range(20))
+    chunks = bot._split(lines, limit=1000)
+    assert all(len(c) <= 1000 for c in chunks)
+    # No chunk ends mid-line (each line is 200 'L's, breaks land on newlines).
+    assert all(set(c) <= {"L", "\n"} for c in chunks)
+
+
+def test_split_reassembles_content():
+    text = "\n\n".join(f"block{i} " + "z" * 100 for i in range(40))
+    chunks = bot._split(text, limit=500)
+    # Content preserved (ignoring the newlines trimmed at boundaries).
+    assert "".join(chunks).replace("\n", "") == text.replace("\n", "")
+
+
+def test_split_hard_cuts_single_oversized_line():
+    chunks = bot._split("Q" * 2500, limit=1000)
+    assert [len(c) for c in chunks] == [1000, 1000, 500]
 
 
 # ---------------------------------------------------------------------------

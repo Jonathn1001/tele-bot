@@ -115,10 +115,15 @@ async def hn_digest(stories: list[Story]) -> str:
         [],
         raw_contents=f"<hn_stories>\n{numbered}\n</hn_stories>",
     )
-    links = "\n".join(
-        f"{i}. {s.title}\n   {s.url}\n   💬 {s.hn_url}"
-        for i, s in enumerate(stories, 1)
-    )
+    link_lines = []
+    for i, s in enumerate(stories, 1):
+        # Text/Ask HN posts have no external URL (url == the HN thread), so the
+        # article link and the 💬 discussion link would be identical — show one.
+        if s.url == s.hn_url:
+            link_lines.append(f"{i}. {s.title}\n   💬 {s.hn_url}")
+        else:
+            link_lines.append(f"{i}. {s.title}\n   {s.url}\n   💬 {s.hn_url}")
+    links = "\n".join(link_lines)
     return f"{overview}\n\n──\n{links}"
 
 
