@@ -4,4 +4,4 @@ google-genai==2.10.0
 python-dotenv==1.2.2
 asyncpg==0.31.0
 tzdata==2026.2
-cloudscraper==1.2.71
+curl_cffi==0.15.0

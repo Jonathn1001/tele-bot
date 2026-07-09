@@ -7,13 +7,13 @@ from dataclasses import dataclass
 from datetime import datetime
 from email.utils import parsedate_to_datetime
 
-import cloudscraper
+from curl_cffi import requests as curl_requests
 
 logger = logging.getLogger(__name__)
 
 # "Điểm báo" subforum: one thread per curated news article.
-# voz.vn sits behind Cloudflare; plain HTTP clients get a 403 challenge page,
-# so fetching goes through cloudscraper (sync, run in a thread).
+# voz.vn sits behind Cloudflare, which fingerprints the client TLS/HTTP2 stack;
+# curl_cffi impersonating Chrome passes where requests/cloudscraper get 403.
 FEED_URL = "https://voz.vn/f/diem-bao.33/index.rss"
 
 _NS = {
@@ -70,8 +70,7 @@ def parse_feed(xml_text: str, limit: int = 20) -> list[Headline]:
 
 
 def _fetch_sync() -> str:
-    scraper = cloudscraper.create_scraper()
-    resp = scraper.get(FEED_URL, timeout=40)
+    resp = curl_requests.get(FEED_URL, impersonate="chrome", timeout=40)
     resp.raise_for_status()
     return resp.text
 
