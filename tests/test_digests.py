@@ -420,3 +420,64 @@ async def test_cmd_paper_replies_with_digest():
 
 async def test_hn_command_is_rate_limited():
     assert "/hn" in bot.ANALYSIS_COMMANDS and "/paper" in bot.ANALYSIS_COMMANDS
+
+
+# ---------------------------------------------------------------------------
+# pinned news threads (f/Điểm báo sticky block)
+# ---------------------------------------------------------------------------
+
+FORUM_HTML = """
+<html><body>
+  <div class="structItemContainer-group structItemContainer-group--sticky">
+    <div class="structItem structItem--thread">
+      <div class="structItem-title"><a href="/t/report-f33.111/">Report F33</a></div>
+    </div>
+    <div class="structItem structItem--thread">
+      <div class="structItem-title">
+        <a href="/t/tinh-hinh-iran.222/">Tình hình Iran và các bên liên quan | Đọc kỹ nội quy trước khi cmt</a>
+      </div>
+    </div>
+    <div class="structItem structItem--thread">
+      <div class="structItem-title"><a href="/t/noi-quy-box.333/">NỘI QUY box Điểm báo</a></div>
+    </div>
+    <div class="structItem structItem--thread">
+      <div class="structItem-title"><a href="/t/chien-su-gaza.444/">Chiến sự Gaza cập nhật</a></div>
+    </div>
+    <div class="structItem structItem--thread">
+      <div class="structItem-title"><a href="/f/not-a-thread.9/">Nhãn chuyên mục</a></div>
+    </div>
+  </div>
+  <div class="structItemContainer-group js-threadList">
+    <div class="structItem structItem--thread">
+      <div class="structItem-title"><a href="/t/tin-thuong.555/">Tin thường không ghim</a></div>
+    </div>
+  </div>
+</body></html>
+"""
+
+
+def test_parse_pinned_threads_filters_meta_and_non_threads():
+    pinned = voz.parse_pinned_threads(FORUM_HTML)
+    titles = [p.title for p in pinned]
+    # meta stickies (title STARTS with Report / Nội quy, any case) are dropped;
+    # "nội quy" mid-title (the Iran megathread) must survive
+    assert titles == [
+        "Tình hình Iran và các bên liên quan | Đọc kỹ nội quy trước khi cmt",
+        "Chiến sự Gaza cập nhật",
+    ]
+    # relative hrefs become canonical absolute thread URLs
+    assert pinned[0].url == "https://voz.vn/t/tinh-hinh-iran.222/"
+    # non-sticky threads are never included
+    assert all("tin-thuong" not in p.url for p in pinned)
+
+
+async def test_fetch_pinned_news_threads_caps_at_limit():
+    with patch.object(voz, "_fetch_page_sync", return_value=FORUM_HTML):
+        pinned = await voz.fetch_pinned_news_threads(limit=1)
+    assert len(pinned) == 1
+    assert pinned[0].url == "https://voz.vn/t/tinh-hinh-iran.222/"
+
+
+async def test_fetch_pinned_news_threads_survives_fetch_failure():
+    with patch.object(voz, "_fetch_page_sync", side_effect=RuntimeError("cf")):
+        assert await voz.fetch_pinned_news_threads() == []

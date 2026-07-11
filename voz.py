@@ -17,6 +17,14 @@ logger = logging.getLogger(__name__)
 # curl_cffi impersonating Chrome passes where requests/cloudscraper get 403.
 FEED_URL = "https://voz.vn/f/diem-bao.33/index.rss"
 
+# Forum landing page — pinned rolling-news megathreads live in its sticky
+# block and never appear in the RSS feed (which only carries new threads).
+FORUM_URL = "https://voz.vn/f/diem-bao.33/"
+
+# Meta stickies (rules, report-to-mods) — anchored: the Iran megathread's
+# title CONTAINS "nội quy" mid-string and must not be filtered.
+META_STICKY_RE = re.compile(r"^\s*(nội quy|report)", re.IGNORECASE)
+
 # Only voz thread URLs are fetchable — guards against pointing the fetcher at
 # arbitrary hosts (SSRF). Captures the canonical base "https://voz.vn/t/<slug>.<id>/".
 THREAD_URL_RE = re.compile(r"^https?://(?:www\.)?voz\.vn/t/[\w%-]+\.\d+/")
@@ -38,6 +46,12 @@ class Headline:
     summary: str
     comments: int = 0
     published: datetime | None = None
+
+
+@dataclass
+class PinnedThread:
+    title: str
+    url: str  # canonical "https://voz.vn/t/<slug>.<id>/"
 
 
 @dataclass
@@ -103,6 +117,33 @@ async def fetch_headlines(limit: int = 20) -> list[Headline]:
         logger.exception("VOZ: failed to fetch Điểm báo feed")
         return []
     return parse_feed(body, limit=limit)
+
+
+def parse_pinned_threads(html_text: str) -> list[PinnedThread]:
+    """News megathreads from the forum page's sticky block; meta stickies dropped."""
+    soup = BeautifulSoup(html_text, "html.parser")
+    pinned: list[PinnedThread] = []
+    for item in soup.select(".structItemContainer-group--sticky .structItem--thread"):
+        link = item.select_one(".structItem-title a[href*='/t/']")
+        if link is None:
+            continue
+        title = link.get_text(strip=True)
+        href = link["href"]
+        absolute = href if href.startswith("http") else f"https://voz.vn{href}"
+        url = normalize_thread_url(absolute)
+        if url is None or META_STICKY_RE.search(title):
+            continue
+        pinned.append(PinnedThread(title=title, url=url))
+    return pinned
+
+
+async def fetch_pinned_news_threads(limit: int = 2) -> list[PinnedThread]:
+    try:
+        body = await asyncio.to_thread(_fetch_page_sync, FORUM_URL)
+    except Exception:
+        logger.exception("VOZ: failed to fetch Điểm báo forum page")
+        return []
+    return parse_pinned_threads(body)[:limit]
 
 
 # --- thread comment reading ----------------------------------------------
