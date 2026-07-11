@@ -29,6 +29,12 @@ def _mock_msg() -> AsyncMock:
     return m
 
 
+def _mock_state(current: str | None = None) -> AsyncMock:
+    st = AsyncMock()
+    st.get_state = AsyncMock(return_value=current)
+    return st
+
+
 # ---------------------------------------------------------------------------
 # /start
 # ---------------------------------------------------------------------------
@@ -154,18 +160,17 @@ async def test_analysis_calls_analyzer_and_replies(cmd_fn, analyzer_fn):
 # /factcheck
 # ---------------------------------------------------------------------------
 
-async def test_factcheck_no_claim_returns_usage():
+async def test_factcheck_no_claim_starts_prompt():
     from unittest.mock import MagicMock
     msg = _mock_msg()
     cmd = MagicMock()
     cmd.args = None
-    buf = _make_buffer("some message")
-    with patch.object(bot, "_buffer", buf):
-        await bot.cmd_factcheck(msg, cmd)
-    msg.answer.assert_called_once()
-    usage_text = msg.answer.call_args[0][0]
-    assert usage_text.startswith("Usage: /factcheck <your claim>")
-    assert "Example:" in usage_text
+    state = _mock_state()
+    await bot.cmd_factcheck(msg, cmd, state)
+    state.set_state.assert_called_once_with(bot.PromptFlow.awaiting_claim)
+    prompt_text = msg.answer.call_args[0][0]
+    assert "claim" in prompt_text
+    assert "/cancel" in prompt_text
 
 
 async def test_factcheck_claim_too_long_returns_error():
@@ -173,9 +178,11 @@ async def test_factcheck_claim_too_long_returns_error():
     msg = _mock_msg()
     cmd = MagicMock()
     cmd.args = "x" * 501
+    state = _mock_state()
     buf = _make_buffer("some message")
     with patch.object(bot, "_buffer", buf):
-        await bot.cmd_factcheck(msg, cmd)
+        await bot.cmd_factcheck(msg, cmd, state)
+    state.set_state.assert_not_called()
     text = msg.answer.call_args[0][0]
     assert "too long" in text.lower()
 
@@ -185,8 +192,10 @@ async def test_factcheck_empty_buffer_returns_no_messages():
     msg = _mock_msg()
     cmd = MagicMock()
     cmd.args = "Russia attacked Ukraine"
+    state = _mock_state()
     with patch.object(bot, "_buffer", None):
-        await bot.cmd_factcheck(msg, cmd)
+        await bot.cmd_factcheck(msg, cmd, state)
+    state.set_state.assert_not_called()
     msg.answer.assert_called_once_with(bot.EMPTY_BUFFER_REPLY)
 
 
@@ -195,14 +204,55 @@ async def test_factcheck_calls_analyzer_and_replies():
     msg = _mock_msg()
     cmd = MagicMock()
     cmd.args = "Russia attacked Ukraine"
+    state = _mock_state()
     buf = _make_buffer("test message")
     mock_fn = AsyncMock(return_value="SUPPORTED\nEvidence.")
     with patch.object(bot, "_buffer", buf), \
          patch("analyzer.fact_check", new=mock_fn):
-        await bot.cmd_factcheck(msg, cmd)
+        await bot.cmd_factcheck(msg, cmd, state)
+    state.set_state.assert_not_called()
     mock_fn.assert_called_once()
     all_texts = [c[0][0] for c in msg.answer.call_args_list]
     assert any("SUPPORTED" in t for t in all_texts)
+
+
+# ---------------------------------------------------------------------------
+# Prompt flow — /factcheck via button
+# ---------------------------------------------------------------------------
+
+async def test_prompt_claim_runs_factcheck_and_clears_state():
+    msg = _mock_msg()
+    msg.text = "Russia closed the border"
+    state = _mock_state(bot.PromptFlow.awaiting_claim.state)
+    buf = _make_buffer("test message")
+    mock_fn = AsyncMock(return_value="SUPPORTED\nEvidence.")
+    with patch.object(bot, "_buffer", buf), \
+         patch("analyzer.fact_check", new=mock_fn):
+        await bot.prompt_claim(msg, state)
+    state.clear.assert_called_once()
+    mock_fn.assert_called_once()
+    assert mock_fn.call_args[0][0] == "Russia closed the border"
+
+
+async def test_prompt_claim_too_long_reprompts_and_keeps_state():
+    msg = _mock_msg()
+    msg.text = "x" * 501
+    state = _mock_state(bot.PromptFlow.awaiting_claim.state)
+    await bot.prompt_claim(msg, state)
+    state.clear.assert_not_called()
+    assert str(bot.MAX_CLAIM_LENGTH) in msg.answer.call_args[0][0]
+
+
+async def test_prompt_claim_slash_text_cancels_prompt():
+    # An unknown command mid-prompt: state was already cleared by the
+    # ClearPromptOnCommandMiddleware; the handler must not treat it as a claim.
+    msg = _mock_msg()
+    msg.text = "/unknowncmd"
+    state = _mock_state(None)
+    mock_fn = AsyncMock()
+    with patch("analyzer.fact_check", new=mock_fn):
+        await bot.prompt_claim(msg, state)
+    mock_fn.assert_not_called()
 
 
 # ---------------------------------------------------------------------------

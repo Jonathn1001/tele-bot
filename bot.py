@@ -6,6 +6,8 @@ from typing import Any
 from aiogram import BaseMiddleware, Bot, Dispatcher, Router
 from aiogram.enums import ParseMode
 from aiogram.filters import Command, CommandObject
+from aiogram.fsm.context import FSMContext
+from aiogram.fsm.state import State, StatesGroup
 from aiogram.types import BotCommand, KeyboardButton, ReplyKeyboardMarkup
 from aiogram.types import Message as TgMessage
 from aiogram.types import TelegramObject
@@ -100,6 +102,14 @@ BOT_COMMANDS = [
 async def setup_bot_commands(bot: Bot) -> None:
     """Register the native '/' menu. Cosmetic — callers should fail soft."""
     await bot.set_my_commands(BOT_COMMANDS)
+
+
+class PromptFlow(StatesGroup):
+    """Button taps on /factcheck and /thread start a short conversation:
+    the next plain message is treated as the missing argument."""
+
+    awaiting_claim = State()
+    awaiting_thread_url = State()
 
 
 def build_dispatcher(buffer: MessageBuffer, bot: Bot) -> Dispatcher:
@@ -242,15 +252,7 @@ async def cmd_thread(message: TgMessage, command: CommandObject) -> None:
     await _reply_analysis(message, result)
 
 
-@router.message(Command("factcheck"))
-async def cmd_factcheck(message: TgMessage, command: CommandObject) -> None:
-    claim = (command.args or "").strip()
-    if not claim:
-        await message.answer(
-            "Usage: /factcheck <your claim>\n"
-            "Example: /factcheck Russia closed the border today"
-        )
-        return
+async def _run_factcheck(message: TgMessage, claim: str) -> None:
     if len(claim) > MAX_CLAIM_LENGTH:
         await message.answer(f"Claim too long. Please keep it under {MAX_CLAIM_LENGTH} characters.")
         return
@@ -261,3 +263,29 @@ async def cmd_factcheck(message: TgMessage, command: CommandObject) -> None:
     await message.answer(f"🔎 Fact-checking against {len(msgs)} channel messages + web sources… (~20s)")
     result = await analyzer.fact_check(claim, msgs)
     await _reply_analysis(message, result)
+
+
+@router.message(Command("factcheck"))
+async def cmd_factcheck(message: TgMessage, command: CommandObject, state: FSMContext) -> None:
+    claim = (command.args or "").strip()
+    if not claim:
+        await state.set_state(PromptFlow.awaiting_claim)
+        await message.answer("Send the claim to check (or /cancel).")
+        return
+    await _run_factcheck(message, claim)
+
+
+# Prompt-flow answer handlers — MUST stay registered after all Command
+# handlers so a command sent mid-prompt matches its own handler first.
+@router.message(PromptFlow.awaiting_claim)
+async def prompt_claim(message: TgMessage, state: FSMContext) -> None:
+    claim = (message.text or "").strip()
+    if claim.startswith("/"):
+        # Unknown command mid-prompt; middleware already dropped the state.
+        await message.answer("Prompt cancelled.")
+        return
+    if not claim or len(claim) > MAX_CLAIM_LENGTH:
+        await message.answer(f"Send a text claim under {MAX_CLAIM_LENGTH} characters, or /cancel.")
+        return
+    await state.clear()
+    await _run_factcheck(message, claim)
