@@ -6,6 +6,7 @@ from typing import Any
 from aiogram import BaseMiddleware, Bot, Dispatcher, Router
 from aiogram.enums import ParseMode
 from aiogram.filters import Command, CommandObject
+from aiogram.types import KeyboardButton, ReplyKeyboardMarkup
 from aiogram.types import Message as TgMessage
 from aiogram.types import TelegramObject
 
@@ -71,6 +72,19 @@ EMPTY_BUFFER_REPLY = (
 _buffer: MessageBuffer | None = None
 MAX_CLAIM_LENGTH = 500
 
+# Button text is the literal command: a tap sends a normal command message,
+# so existing handlers, owner-check and rate-limit apply unchanged.
+QUICK_KEYBOARD = ReplyKeyboardMarkup(
+    keyboard=[
+        [KeyboardButton(text="/summary"), KeyboardButton(text="/threat")],
+        [KeyboardButton(text="/hn"), KeyboardButton(text="/paper")],
+        [KeyboardButton(text="/factcheck"), KeyboardButton(text="/thread")],
+        [KeyboardButton(text="/channels")],
+    ],
+    is_persistent=True,
+    resize_keyboard=True,
+)
+
 
 def build_dispatcher(buffer: MessageBuffer, bot: Bot) -> Dispatcher:
     global _buffer
@@ -130,6 +144,7 @@ async def cmd_start(message: TgMessage) -> None:
         "Scheduled pushes: HN security digest 08:30 & 20:00, điểm báo 07:00 (VN time).\n"
         "Analysis replies are in English; /paper and /thread reply in Tiếng Việt.",
         parse_mode=ParseMode.MARKDOWN,
+        reply_markup=QUICK_KEYBOARD,
     )
 
 

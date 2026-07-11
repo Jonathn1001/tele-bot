@@ -46,6 +46,26 @@ async def test_start_contains_bot_name():
     assert "Telegram Intel Bot" in text
 
 
+async def test_start_attaches_quick_keyboard():
+    msg = _mock_msg()
+    await bot.cmd_start(msg)
+    kb = msg.answer.call_args[1]["reply_markup"]
+    assert kb is bot.QUICK_KEYBOARD
+
+
+def test_quick_keyboard_layout():
+    kb = bot.QUICK_KEYBOARD
+    assert kb.is_persistent is True
+    assert kb.resize_keyboard is True
+    texts = [b.text for row in kb.keyboard for b in row]
+    assert texts == [
+        "/summary", "/threat",
+        "/hn", "/paper",
+        "/factcheck", "/thread",
+        "/channels",
+    ]
+
+
 # ---------------------------------------------------------------------------
 # /channels
 # ---------------------------------------------------------------------------
