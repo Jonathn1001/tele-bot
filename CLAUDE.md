@@ -48,6 +48,8 @@ Both tasks share the same `MessageBuffer` instance directly via reference (no qu
 
 **Proactive keyword alerts:** `alerts.py` (`AlertMatcher`) compiles `ALERT_KEYWORDS` into a word-boundary, case-insensitive regex. The crawler's *live* message handler (never backfill) matches each message and fires `on_alert` in `main.py`, which pushes `🚨 Alert [keywords] in @channel` to the owner via `send_to_owner`. Empty `ALERT_KEYWORDS` disables it.
 
+**Quick-start buttons:** `/start` attaches a persistent `ReplyKeyboardMarkup` whose button text is the literal command, so taps go through the normal command pipeline (owner check, rate limit). `/factcheck` and `/thread` without args enter an aiogram FSM prompt state (`PromptFlow`, in-memory `MemoryStorage`) and treat the next plain message as the argument; `ClearPromptOnCommandMiddleware` makes any command cancel a pending prompt, and `RateLimitMiddleware` throttles prompt answers (which call Gemini) while exempting the bare button taps (which don't).
+
 **Liveness watchdog:** `health.py` runs a daemon OS thread (survives an asyncio event-loop stall) that `os._exit(1)`s if the heartbeat file goes stale (>180s), so Docker's `restart: unless-stopped` recovers a wedged bot — the failure mode plain restart policies miss. An asyncio `heartbeat()` task in `main.py` refreshes the file every 30s; a `HEALTHCHECK` in the Dockerfile surfaces the same staleness in `docker ps`.
 
 ## Configuration
@@ -90,6 +92,7 @@ Copy `.env.example` to `.env` and fill in values before running.
 | `/hn` | Current security stories from Hacker News |
 | `/paper` | Điểm báo — press review from voz.vn f/Điểm báo |
 | `/thread <voz url>` | Summarize the recent comments (discussion + sentiment) of a voz thread |
+| `/cancel` | Cancel a pending /factcheck or /thread prompt |
 
 ## Key Constraints
 

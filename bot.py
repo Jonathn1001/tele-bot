@@ -207,9 +207,11 @@ async def cmd_start(message: TgMessage) -> None:
         "/paper — Điểm báo: press review from voz.vn f/Điểm báo\n"
         "/thread <voz url> — Summarize the recent comments on a voz thread\n"
         "      e.g. `/thread https://voz.vn/t/abc.123456/`\n"
-        "/channels — Monitored channels and message counts\n\n"
+        "/channels — Monitored channels and message counts\n"
+        "/cancel — Cancel the current prompt\n\n"
         "Scheduled pushes: HN security digest 08:30 & 20:00, điểm báo 07:00 (VN time).\n"
-        "Analysis replies are in English; /paper and /thread reply in Tiếng Việt.",
+        "Analysis replies are in English; /paper and /thread reply in Tiếng Việt.\n"
+        "Tap a button below or use the '/' menu — no typing needed.",
         parse_mode=ParseMode.MARKDOWN,
         reply_markup=QUICK_KEYBOARD,
     )
