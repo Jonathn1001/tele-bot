@@ -231,18 +231,7 @@ async def cmd_paper(message: TgMessage) -> None:
     await _reply_analysis(message, result)
 
 
-@router.message(Command("thread"))
-async def cmd_thread(message: TgMessage, command: CommandObject) -> None:
-    url = (command.args or "").strip()
-    if not url:
-        await message.answer(
-            "Usage: /thread <voz thread url>\n"
-            "Example: /thread https://voz.vn/t/abc.123456/"
-        )
-        return
-    if voz.normalize_thread_url(url) is None:
-        await message.answer("Đó không phải link thread voz hợp lệ (cần dạng voz.vn/t/…/).")
-        return
+async def _run_thread(message: TgMessage, url: str) -> None:
     await message.answer("🧵 Đang đọc bình luận mới nhất trên thread voz… (~30s)")
     thread = await voz.fetch_thread(url)
     if thread is None:
@@ -250,6 +239,19 @@ async def cmd_thread(message: TgMessage, command: CommandObject) -> None:
         return
     result = await analyzer.thread_summary(thread)
     await _reply_analysis(message, result)
+
+
+@router.message(Command("thread"))
+async def cmd_thread(message: TgMessage, command: CommandObject, state: FSMContext) -> None:
+    url = (command.args or "").strip()
+    if not url:
+        await state.set_state(PromptFlow.awaiting_thread_url)
+        await message.answer("Gửi link thread voz (dạng voz.vn/t/…/) — hoặc /cancel.")
+        return
+    if voz.normalize_thread_url(url) is None:
+        await message.answer("Đó không phải link thread voz hợp lệ (cần dạng voz.vn/t/…/).")
+        return
+    await _run_thread(message, url)
 
 
 async def _run_factcheck(message: TgMessage, claim: str) -> None:
@@ -289,3 +291,16 @@ async def prompt_claim(message: TgMessage, state: FSMContext) -> None:
         return
     await state.clear()
     await _run_factcheck(message, claim)
+
+
+@router.message(PromptFlow.awaiting_thread_url)
+async def prompt_thread_url(message: TgMessage, state: FSMContext) -> None:
+    url = (message.text or "").strip()
+    if url.startswith("/"):
+        await message.answer("Prompt cancelled.")
+        return
+    if voz.normalize_thread_url(url) is None:
+        await message.answer("Đó không phải link thread voz hợp lệ — gửi lại link (hoặc /cancel).")
+        return
+    await state.clear()
+    await _run_thread(message, url)

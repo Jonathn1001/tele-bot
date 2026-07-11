@@ -298,17 +298,25 @@ async def test_thread_summary_wraps_posts_and_titles():
     assert "<thread_posts>" in raw and "[alice]: quan điểm A" in raw
 
 
-async def test_cmd_thread_requires_url():
+def _mock_fsm_state() -> AsyncMock:
+    st = AsyncMock()
+    st.get_state = AsyncMock(return_value=None)
+    return st
+
+
+async def test_cmd_thread_no_url_starts_prompt():
     msg = _mock_msg()
     cmd = type("C", (), {"args": None})()
-    await bot.cmd_thread(msg, cmd)
-    assert "Usage" in msg.answer.call_args[0][0]
+    state = _mock_fsm_state()
+    await bot.cmd_thread(msg, cmd, state)
+    state.set_state.assert_called_once_with(bot.PromptFlow.awaiting_thread_url)
+    assert "/cancel" in msg.answer.call_args[0][0]
 
 
 async def test_cmd_thread_rejects_bad_url():
     msg = _mock_msg()
     cmd = type("C", (), {"args": "https://evil.com/t/x.1/"})()
-    await bot.cmd_thread(msg, cmd)
+    await bot.cmd_thread(msg, cmd, _mock_fsm_state())
     assert "voz" in msg.answer.call_args[0][0].lower()
 
 
@@ -318,7 +326,7 @@ async def test_cmd_thread_summarizes():
     fake = voz.Thread(title="T", url="https://voz.vn/t/x.9/", posts=[voz.Post("a", "b")])
     with patch.object(bot.voz, "fetch_thread", new=AsyncMock(return_value=fake)), \
          patch.object(bot.analyzer, "thread_summary", new=AsyncMock(return_value="summary")):
-        await bot.cmd_thread(msg, cmd)
+        await bot.cmd_thread(msg, cmd, _mock_fsm_state())
     assert msg.answer.call_count == 2  # status + summary
 
 
@@ -326,7 +334,7 @@ async def test_cmd_thread_fetch_failure_sanitized():
     msg = _mock_msg()
     cmd = type("C", (), {"args": "https://voz.vn/t/x.9/"})()
     with patch.object(bot.voz, "fetch_thread", new=AsyncMock(return_value=None)):
-        await bot.cmd_thread(msg, cmd)
+        await bot.cmd_thread(msg, cmd, _mock_fsm_state())
     assert msg.answer.call_args[0][0] == analyzer.ANALYSIS_FAILED_REPLY
 
 

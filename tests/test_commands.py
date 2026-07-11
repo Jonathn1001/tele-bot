@@ -256,6 +256,58 @@ async def test_prompt_claim_slash_text_cancels_prompt():
 
 
 # ---------------------------------------------------------------------------
+# Prompt flow — /thread via button
+# ---------------------------------------------------------------------------
+
+async def test_thread_no_url_starts_prompt():
+    from unittest.mock import MagicMock
+    msg = _mock_msg()
+    cmd = MagicMock()
+    cmd.args = None
+    state = _mock_state()
+    await bot.cmd_thread(msg, cmd, state)
+    state.set_state.assert_called_once_with(bot.PromptFlow.awaiting_thread_url)
+    assert "/cancel" in msg.answer.call_args[0][0]
+
+
+async def test_thread_with_url_does_not_enter_prompt():
+    from unittest.mock import MagicMock
+    import voz
+    msg = _mock_msg()
+    cmd = MagicMock()
+    cmd.args = "https://voz.vn/t/abc.123456/"
+    state = _mock_state()
+    thread = voz.Thread(title="T", url=cmd.args, posts=[])
+    with patch("voz.fetch_thread", new=AsyncMock(return_value=thread)), \
+         patch("analyzer.thread_summary", new=AsyncMock(return_value="tóm tắt")):
+        await bot.cmd_thread(msg, cmd, state)
+    state.set_state.assert_not_called()
+
+
+async def test_prompt_thread_url_invalid_reprompts_and_keeps_state():
+    msg = _mock_msg()
+    msg.text = "https://evil.com/t/x.1/"
+    state = _mock_state(bot.PromptFlow.awaiting_thread_url.state)
+    await bot.prompt_thread_url(msg, state)
+    state.clear.assert_not_called()
+    assert "voz" in msg.answer.call_args[0][0]
+
+
+async def test_prompt_thread_url_valid_runs_summary_and_clears_state():
+    import voz
+    msg = _mock_msg()
+    msg.text = "https://voz.vn/t/abc.123456/"
+    state = _mock_state(bot.PromptFlow.awaiting_thread_url.state)
+    thread = voz.Thread(title="T", url=msg.text, posts=[])
+    mock_fn = AsyncMock(return_value="tóm tắt")
+    with patch("voz.fetch_thread", new=AsyncMock(return_value=thread)), \
+         patch("analyzer.thread_summary", new=mock_fn):
+        await bot.prompt_thread_url(msg, state)
+    state.clear.assert_called_once()
+    mock_fn.assert_called_once()
+
+
+# ---------------------------------------------------------------------------
 # config.OWNER_ID
 # ---------------------------------------------------------------------------
 
