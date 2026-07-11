@@ -170,6 +170,24 @@ async def thread_summary(thread: Thread) -> str:
     return f"{header}{overview}"
 
 
+async def megathread_update(thread: Thread) -> str:
+    """Vietnamese news-update brief from a pinned megathread's recent comments."""
+    if not thread.posts:
+        return ""
+    body = "\n".join(f"[{p.author}]: {p.text}" for p in thread.posts)
+    return await _ask(
+        "Bạn đang theo dõi thread tin nóng trên diễn đàn voz có tiêu đề "
+        f"'{thread.title}'. Từ các bình luận mới nhất dưới đây, tóm tắt những "
+        "diễn biến mới nhất mà người bình luận đang đưa tin hoặc thảo luận — "
+        "dạng bản tin cập nhật, tối đa 8 dòng bắt đầu bằng '•'. "
+        "Không phân tích cảm xúc cộng đồng. "
+        "Chỉ trả lời bằng tiếng Việt. "
+        f"{PLAIN_TEXT_FORMAT_INSTRUCTION}",
+        [],
+        raw_contents=f"<thread_posts>\n{body}\n</thread_posts>",
+    )
+
+
 async def fact_check(claim: str, messages: list[Message]) -> str:
     context = _format_messages(messages)
     system = (

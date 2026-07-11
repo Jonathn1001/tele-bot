@@ -481,3 +481,28 @@ async def test_fetch_pinned_news_threads_caps_at_limit():
 async def test_fetch_pinned_news_threads_survives_fetch_failure():
     with patch.object(voz, "_fetch_page_sync", side_effect=RuntimeError("cf")):
         assert await voz.fetch_pinned_news_threads() == []
+
+
+# ---------------------------------------------------------------------------
+# megathread update (pinned thread → news brief)
+# ---------------------------------------------------------------------------
+
+async def test_megathread_update_empty_posts_returns_empty():
+    thread = voz.Thread(title="T", url="https://voz.vn/t/x.9/", posts=[])
+    assert await analyzer.megathread_update(thread) == ""
+
+
+async def test_megathread_update_prompt_vietnamese_and_delimited():
+    thread = voz.Thread(
+        title="Tình hình Iran", url="https://voz.vn/t/x.9/",
+        posts=[voz.Post(author="alice", text="Iran vừa tuyên bố X")],
+    )
+    with patch.object(analyzer, "_ask", new=AsyncMock(return_value="• cập nhật")) as ask:
+        result = await analyzer.megathread_update(thread)
+    assert result == "• cập nhật"
+    system = ask.call_args[0][0]
+    assert "Chỉ trả lời bằng tiếng Việt." in system
+    assert "Tình hình Iran" in system
+    assert "Tiếng Việt:" not in system  # no bilingual section labels
+    raw = ask.call_args.kwargs["raw_contents"]
+    assert "<thread_posts>" in raw and "[alice]: Iran vừa tuyên bố X" in raw
