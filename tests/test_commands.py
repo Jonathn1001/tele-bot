@@ -66,6 +66,18 @@ def test_quick_keyboard_layout():
     ]
 
 
+async def test_setup_bot_commands_registers_menu():
+    tg_bot = AsyncMock()
+    await bot.setup_bot_commands(tg_bot)
+    tg_bot.set_my_commands.assert_called_once()
+    commands = tg_bot.set_my_commands.call_args[0][0]
+    names = [c.command for c in commands]
+    assert names == [
+        "summary", "threat", "factcheck", "hn",
+        "paper", "thread", "channels", "cancel",
+    ]
+
+
 # ---------------------------------------------------------------------------
 # /channels
 # ---------------------------------------------------------------------------

@@ -12,7 +12,7 @@ import health
 import hn
 import voz
 from alerts import AlertMatcher
-from bot import build_dispatcher, send_to_owner
+from bot import build_dispatcher, send_to_owner, setup_bot_commands
 from buffer import Message, MessageBuffer
 from crawler import TelegramCrawler
 from scheduler import Job, parse_times, run_scheduler
@@ -75,6 +75,11 @@ async def main() -> None:
     health.start_watchdog()
     if matcher.enabled:
         logger.info("Alerts: watching %d keywords", len(config.ALERT_KEYWORDS))
+
+    try:
+        await setup_bot_commands(bot)
+    except Exception:
+        logger.exception("set_my_commands failed; '/' menu may be stale")
 
     logger.info("Starting Telegram Intel Bot...")
     await asyncio.gather(

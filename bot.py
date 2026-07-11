@@ -6,7 +6,7 @@ from typing import Any
 from aiogram import BaseMiddleware, Bot, Dispatcher, Router
 from aiogram.enums import ParseMode
 from aiogram.filters import Command, CommandObject
-from aiogram.types import KeyboardButton, ReplyKeyboardMarkup
+from aiogram.types import BotCommand, KeyboardButton, ReplyKeyboardMarkup
 from aiogram.types import Message as TgMessage
 from aiogram.types import TelegramObject
 
@@ -84,6 +84,22 @@ QUICK_KEYBOARD = ReplyKeyboardMarkup(
     is_persistent=True,
     resize_keyboard=True,
 )
+
+BOT_COMMANDS = [
+    BotCommand(command="summary", description="Top 5 significant events"),
+    BotCommand(command="threat", description="Conflict risk assessment (1–5)"),
+    BotCommand(command="factcheck", description="Fact-check a claim"),
+    BotCommand(command="hn", description="HN security stories"),
+    BotCommand(command="paper", description="Điểm báo from voz"),
+    BotCommand(command="thread", description="Summarize a voz thread"),
+    BotCommand(command="channels", description="Monitored channels"),
+    BotCommand(command="cancel", description="Cancel the current prompt"),
+]
+
+
+async def setup_bot_commands(bot: Bot) -> None:
+    """Register the native '/' menu. Cosmetic — callers should fail soft."""
+    await bot.set_my_commands(BOT_COMMANDS)
 
 
 def build_dispatcher(buffer: MessageBuffer, bot: Bot) -> Dispatcher:
