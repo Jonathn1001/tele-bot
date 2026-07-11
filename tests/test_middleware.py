@@ -117,3 +117,68 @@ async def test_rate_limit_allows_after_cooldown_expiry():
     middleware._last_call[config.OWNER_ID] -= 16
     await middleware(handler, msg2, {})
     assert handler.call_count == 2
+
+
+# ---------------------------------------------------------------------------
+# ClearPromptOnCommandMiddleware — commands always win over a pending prompt
+# ---------------------------------------------------------------------------
+
+def _make_text_message(text: str) -> MagicMock:
+    msg = _make_message(config.OWNER_ID)
+    msg.text = text
+    return msg
+
+
+def _make_state(current: str | None) -> AsyncMock:
+    st = AsyncMock()
+    st.get_state = AsyncMock(return_value=current)
+    return st
+
+
+async def test_command_clears_active_prompt_state():
+    mw = bot.ClearPromptOnCommandMiddleware()
+    handler = AsyncMock()
+    state = _make_state(bot.PromptFlow.awaiting_claim.state)
+    msg = _make_text_message("/summary")
+    await mw(handler, msg, {"state": state})
+    state.clear.assert_called_once()
+    handler.assert_called_once()
+
+
+async def test_cancel_command_keeps_state_for_its_handler():
+    """cmd_cancel reads the state itself to reply accurately — don't pre-clear."""
+    mw = bot.ClearPromptOnCommandMiddleware()
+    handler = AsyncMock()
+    state = _make_state(bot.PromptFlow.awaiting_claim.state)
+    msg = _make_text_message("/cancel")
+    await mw(handler, msg, {"state": state})
+    state.clear.assert_not_called()
+    handler.assert_called_once()
+
+
+async def test_plain_text_does_not_touch_state():
+    mw = bot.ClearPromptOnCommandMiddleware()
+    handler = AsyncMock()
+    state = _make_state(bot.PromptFlow.awaiting_claim.state)
+    msg = _make_text_message("just a claim")
+    await mw(handler, msg, {"state": state})
+    state.clear.assert_not_called()
+    handler.assert_called_once()
+
+
+async def test_command_without_active_state_is_untouched():
+    mw = bot.ClearPromptOnCommandMiddleware()
+    handler = AsyncMock()
+    state = _make_state(None)
+    msg = _make_text_message("/summary")
+    await mw(handler, msg, {"state": state})
+    state.clear.assert_not_called()
+    handler.assert_called_once()
+
+
+def test_clear_prompt_middleware_registered_between_owner_and_ratelimit():
+    kinds = [type(m).__name__ for m in bot.router.message.middleware]
+    owner = kinds.index("OwnerOnlyMiddleware")
+    clear = kinds.index("ClearPromptOnCommandMiddleware")
+    rate = kinds.index("RateLimitMiddleware")
+    assert owner < clear < rate

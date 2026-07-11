@@ -308,6 +308,26 @@ async def test_prompt_thread_url_valid_runs_summary_and_clears_state():
 
 
 # ---------------------------------------------------------------------------
+# /cancel
+# ---------------------------------------------------------------------------
+
+async def test_cancel_clears_active_prompt():
+    msg = _mock_msg()
+    state = _mock_state(bot.PromptFlow.awaiting_claim.state)
+    await bot.cmd_cancel(msg, state)
+    state.clear.assert_called_once()
+    assert "cancel" in msg.answer.call_args[0][0].lower()
+
+
+async def test_cancel_without_prompt_says_nothing_to_cancel():
+    msg = _mock_msg()
+    state = _mock_state(None)
+    await bot.cmd_cancel(msg, state)
+    state.clear.assert_not_called()
+    assert "nothing" in msg.answer.call_args[0][0].lower()
+
+
+# ---------------------------------------------------------------------------
 # config.OWNER_ID
 # ---------------------------------------------------------------------------
 

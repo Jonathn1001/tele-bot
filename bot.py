@@ -63,8 +63,32 @@ class RateLimitMiddleware(BaseMiddleware):
         return await handler(event, data)
 
 
+class ClearPromptOnCommandMiddleware(BaseMiddleware):
+    """A command always wins over a pending prompt: drop the prompt state so
+    the user can never get trapped mid-conversation. /cancel is exempt — its
+    handler reads the state itself to reply accurately."""
+
+    async def __call__(
+        self,
+        handler: Callable[[TelegramObject, dict[str, Any]], Awaitable[Any]],
+        event: TelegramObject,
+        data: dict[str, Any],
+    ) -> Any:
+        text = getattr(event, "text", None) or ""
+        state = data.get("state")
+        if (
+            text.startswith("/")
+            and not text.startswith("/cancel")
+            and state is not None
+            and await state.get_state() is not None
+        ):
+            await state.clear()
+        return await handler(event, data)
+
+
 router = Router()
 router.message.middleware(OwnerOnlyMiddleware())
+router.message.middleware(ClearPromptOnCommandMiddleware())
 router.message.middleware(RateLimitMiddleware(config.RATE_LIMIT_SECONDS))
 
 EMPTY_BUFFER_REPLY = (
@@ -172,6 +196,15 @@ async def cmd_start(message: TgMessage) -> None:
         parse_mode=ParseMode.MARKDOWN,
         reply_markup=QUICK_KEYBOARD,
     )
+
+
+@router.message(Command("cancel"))
+async def cmd_cancel(message: TgMessage, state: FSMContext) -> None:
+    if await state.get_state() is None:
+        await message.answer("Nothing to cancel.")
+        return
+    await state.clear()
+    await message.answer("Cancelled.")
 
 
 @router.message(Command("channels"))
