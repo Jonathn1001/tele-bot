@@ -10,9 +10,8 @@ import config
 import db
 import health
 import hn
-import voz
 from alerts import AlertMatcher
-from bot import build_dispatcher, send_to_owner, setup_bot_commands
+from bot import build_dispatcher, build_press_report, send_to_owner, setup_bot_commands
 from buffer import Message, MessageBuffer
 from crawler import TelegramCrawler
 from scheduler import Job, parse_times, run_scheduler
@@ -62,8 +61,7 @@ async def main() -> None:
         await send_to_owner(bot, f"🔐 HN Security Digest\n\n{text}")
 
     async def press_job() -> None:
-        headlines = await voz.fetch_headlines()
-        text = await analyzer.press_digest(headlines)
+        text = await build_press_report()
         await send_to_owner(bot, f"📰 Điểm báo sáng (voz)\n\n{text}")
 
     jobs: list[Job] = [

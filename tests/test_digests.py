@@ -412,10 +412,11 @@ async def test_cmd_hn_fetch_failure_is_sanitized():
 
 async def test_cmd_paper_replies_with_digest():
     msg = _mock_msg()
-    with patch.object(bot.voz, "fetch_headlines", new=AsyncMock(return_value=[])), \
-         patch.object(bot.analyzer, "press_digest", new=AsyncMock(return_value="điểm báo")):
+    with patch.object(bot, "build_press_report", new=AsyncMock(return_value="điểm báo")):
         await bot.cmd_paper(msg)
     assert msg.answer.call_count == 2
+    all_texts = [c[0][0] for c in msg.answer.call_args_list]
+    assert any("điểm báo" in t for t in all_texts)
 
 
 async def test_hn_command_is_rate_limited():
@@ -506,3 +507,53 @@ async def test_megathread_update_prompt_vietnamese_and_delimited():
     assert "Tiếng Việt:" not in system  # no bilingual section labels
     raw = ask.call_args.kwargs["raw_contents"]
     assert "<thread_posts>" in raw and "[alice]: Iran vừa tuyên bố X" in raw
+
+
+# ---------------------------------------------------------------------------
+# build_press_report — digest + megathread sections
+# ---------------------------------------------------------------------------
+
+def _pinned(title="Tình hình Iran", url="https://voz.vn/t/iran.222/"):
+    return voz.PinnedThread(title=title, url=url)
+
+
+async def test_press_report_appends_megathread_section():
+    thread = voz.Thread(title="Tình hình Iran", url="https://voz.vn/t/iran.222/",
+                        posts=[voz.Post("a", "b")])
+    with patch.object(bot.voz, "fetch_headlines", new=AsyncMock(return_value=[])), \
+         patch.object(bot.analyzer, "press_digest", new=AsyncMock(return_value="điểm báo")), \
+         patch.object(bot.voz, "fetch_pinned_news_threads", new=AsyncMock(return_value=[_pinned()])), \
+         patch.object(bot.voz, "fetch_thread", new=AsyncMock(return_value=thread)), \
+         patch.object(bot.analyzer, "megathread_update", new=AsyncMock(return_value="• diễn biến")):
+        report = await bot.build_press_report()
+    assert "điểm báo" in report
+    assert "🔴 Tình hình Iran\n• diễn biến" in report
+
+
+async def test_press_report_without_pinned_is_digest_only():
+    with patch.object(bot.voz, "fetch_headlines", new=AsyncMock(return_value=[])), \
+         patch.object(bot.analyzer, "press_digest", new=AsyncMock(return_value="điểm báo")), \
+         patch.object(bot.voz, "fetch_pinned_news_threads", new=AsyncMock(return_value=[])):
+        report = await bot.build_press_report()
+    assert report == "điểm báo"
+
+
+async def test_press_report_skips_failed_megathread():
+    with patch.object(bot.voz, "fetch_headlines", new=AsyncMock(return_value=[])), \
+         patch.object(bot.analyzer, "press_digest", new=AsyncMock(return_value="điểm báo")), \
+         patch.object(bot.voz, "fetch_pinned_news_threads", new=AsyncMock(return_value=[_pinned()])), \
+         patch.object(bot.voz, "fetch_thread", new=AsyncMock(return_value=None)):
+        report = await bot.build_press_report()
+    assert report == "điểm báo"
+
+
+async def test_press_report_skips_analysis_failed_update():
+    thread = voz.Thread(title="T", url="https://voz.vn/t/iran.222/", posts=[voz.Post("a", "b")])
+    with patch.object(bot.voz, "fetch_headlines", new=AsyncMock(return_value=[])), \
+         patch.object(bot.analyzer, "press_digest", new=AsyncMock(return_value="điểm báo")), \
+         patch.object(bot.voz, "fetch_pinned_news_threads", new=AsyncMock(return_value=[_pinned()])), \
+         patch.object(bot.voz, "fetch_thread", new=AsyncMock(return_value=thread)), \
+         patch.object(bot.analyzer, "megathread_update",
+                      new=AsyncMock(return_value=analyzer.ANALYSIS_FAILED_REPLY)):
+        report = await bot.build_press_report()
+    assert report == "điểm báo"

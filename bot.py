@@ -275,11 +275,24 @@ async def cmd_hn(message: TgMessage) -> None:
     await _reply_analysis(message, result)
 
 
+async def build_press_report() -> str:
+    """Điểm báo digest plus a short update per pinned news megathread."""
+    headlines = await voz.fetch_headlines()
+    parts = [await analyzer.press_digest(headlines)]
+    for pinned in await voz.fetch_pinned_news_threads():
+        thread = await voz.fetch_thread(pinned.url, max_posts=40)
+        if thread is None or not thread.posts:
+            continue
+        update = await analyzer.megathread_update(thread)
+        if update and update != analyzer.ANALYSIS_FAILED_REPLY:
+            parts.append(f"🔴 {pinned.title}\n{update}")
+    return "\n\n".join(parts)
+
+
 @router.message(Command("paper"))
 async def cmd_paper(message: TgMessage) -> None:
     await message.answer("📰 Đang soạn điểm báo từ voz (f/Điểm báo)… (~30s)")
-    headlines = await voz.fetch_headlines()
-    result = await analyzer.press_digest(headlines)
+    result = await build_press_report()
     await _reply_analysis(message, result)
 
 
