@@ -110,44 +110,49 @@ async def test_generate_content_called_once_per_call():
 
 
 # ---------------------------------------------------------------------------
-# Bilingual prompts — each function must include the bilingual instruction
-# (instructions live in system_instruction; contents carries only data)
+# English-only prompts — analysis commands respond in English; only /paper
+# and /thread are Vietnamese (instructions live in system_instruction;
+# contents carries only data)
 # ---------------------------------------------------------------------------
 
-# Full canonical instruction as required by spec — includes the section label requirement
-BILINGUAL_INSTRUCTION = "Respond in both English and Vietnamese. Label each section clearly — 'English:' then 'Tiếng Việt:'"
+ENGLISH_ONLY_INSTRUCTION = "Respond in English only."
 
 
 def _system_instruction(mock_client: MagicMock) -> str:
     return mock_client.models.generate_content.call_args[1]["config"].system_instruction
 
 
-async def test_summarize_prompt_is_bilingual():
+async def test_summarize_prompt_is_english_only():
     msgs = _make_msgs("Event A")
     mock_client = _mock_client("ok")
     with patch.object(analyzer, "_client", mock_client):
         await analyzer.summarize(msgs)
-    assert BILINGUAL_INSTRUCTION in _system_instruction(mock_client)
+    system = _system_instruction(mock_client)
+    assert ENGLISH_ONLY_INSTRUCTION in system
+    assert "Tiếng Việt" not in system
 
 
-async def test_assess_threat_prompt_is_bilingual():
+async def test_assess_threat_prompt_is_english_only():
     msgs = _make_msgs("threat msg")
     mock_client = _mock_client("ok")
     with patch.object(analyzer, "_client", mock_client):
         await analyzer.assess_threat(msgs)
-    assert BILINGUAL_INSTRUCTION in _system_instruction(mock_client)
+    system = _system_instruction(mock_client)
+    assert ENGLISH_ONLY_INSTRUCTION in system
+    assert "Tiếng Việt" not in system
 
 
-async def test_fact_check_prompt_is_bilingual():
+async def test_fact_check_prompt_is_english_only():
     msgs = _make_msgs("Event A")
     mock_client = _mock_client("SUPPORTED\nok")
     with patch.object(analyzer, "_client", mock_client):
         await analyzer.fact_check("some claim", msgs)
     system = _system_instruction(mock_client)
-    assert BILINGUAL_INSTRUCTION in system
-    # Verify verdict instruction was updated to place verdict inside each language section
-    assert "Start each language section with one of:" in system
-    assert "Start your response with one of:" not in system
+    assert ENGLISH_ONLY_INSTRUCTION in system
+    assert "Tiếng Việt" not in system
+    # Single-language response — one verdict at the top of the reply
+    assert "Start your response with one of:" in system
+    assert "Start each language section with one of:" not in system
 
 
 # ---------------------------------------------------------------------------
@@ -164,7 +169,7 @@ async def test_summarize_contents_is_delimited_data_only():
     assert contents.startswith("<channel_messages>")
     assert contents.endswith("</channel_messages>")
     assert "Event A" in contents
-    assert BILINGUAL_INSTRUCTION not in contents  # instructions never mix with data
+    assert ENGLISH_ONLY_INSTRUCTION not in contents  # instructions never mix with data
 
 
 async def test_fact_check_claim_is_delimited():

@@ -21,8 +21,7 @@ ANALYSIS_FAILED_REPLY = "Analysis failed. Please try again later."
 # entity parsing), so ask the model for plain-text-friendly formatting.
 PLAIN_TEXT_FORMAT_INSTRUCTION = (
     "Format for plain-text Telegram: no Markdown syntax (no *, _, #, backticks). "
-    "Use '•' for bullets and short paragraphs. Separate the English and Vietnamese "
-    "sections with a divider line of ── characters."
+    "Use '•' for bullets and short paragraphs."
 )
 
 # Channel posts and user claims are attacker-controllable; without this
@@ -71,7 +70,7 @@ async def summarize(messages: list[Message]) -> str:
         "You are an intelligence analyst. Extract the 5 most significant events or "
         "developments from these Telegram messages. Be concise and factual. "
         "Format as a numbered list. "
-        "Respond in both English and Vietnamese. Label each section clearly — 'English:' then 'Tiếng Việt:'. "
+        "Respond in English only. "
         f"{PLAIN_TEXT_FORMAT_INSTRUCTION}",
         messages,
     )
@@ -82,23 +81,19 @@ async def assess_threat(messages: list[Message]) -> str:
         "Assess the overall threat level and conflict risk based on these Telegram messages. "
         "Rate overall severity 1–5 (1=low, 5=critical). "
         "Explain the top 3 indicators driving your assessment. Be direct. "
-        "Respond in both English and Vietnamese. Label each section clearly — 'English:' then 'Tiếng Việt:'. "
+        "Respond in English only. "
         f"{PLAIN_TEXT_FORMAT_INSTRUCTION}",
         messages,
     )
 
 
-NO_HN_STORIES_REPLY = (
-    "No notable security stories on Hacker News in this window.\n"
-    "──\n"
-    "Không có tin bảo mật đáng chú ý trên Hacker News trong khung giờ này."
-)
+NO_HN_STORIES_REPLY = "No notable security stories on Hacker News in this window."
 
 NO_HEADLINES_REPLY = "Không lấy được tin từ voz Điểm báo — thử lại sau."
 
 
 async def hn_digest(stories: list[Story]) -> str:
-    """Bilingual thematic overview + deterministic link list (LLMs mangle URLs)."""
+    """English thematic overview + deterministic link list (LLMs mangle URLs)."""
     if not stories:
         return NO_HN_STORIES_REPLY
     numbered = "\n".join(
@@ -110,7 +105,7 @@ async def hn_digest(stories: list[Story]) -> str:
         "from the last few hours, numbered. Write a short thematic briefing: group "
         "related stories, explain in 1-2 sentences per theme why it matters, and "
         "reference stories by their number like (#3). Do not write URLs. "
-        "Respond in both English and Vietnamese. Label each section clearly — 'English:' then 'Tiếng Việt:'. "
+        "Respond in English only. "
         f"{PLAIN_TEXT_FORMAT_INSTRUCTION}",
         [],
         raw_contents=f"<hn_stories>\n{numbered}\n</hn_stories>",
@@ -151,14 +146,12 @@ async def press_digest(headlines: list[Headline]) -> str:
 
 
 EMPTY_THREAD_REPLY = (
-    "Không đọc được bình luận nào từ thread này. Kiểm tra lại link voz.\n"
-    "──\n"
-    "Couldn't read any comments from this thread — check the voz link."
+    "Không đọc được bình luận nào từ thread này. Kiểm tra lại link voz."
 )
 
 
 async def thread_summary(thread: Thread) -> str:
-    """Bilingual discussion + sentiment summary of a voz thread's recent comments."""
+    """Vietnamese discussion + sentiment summary of a voz thread's recent comments."""
     if not thread.posts:
         return EMPTY_THREAD_REPLY
     body = "\n".join(f"[{p.author}]: {p.text}" for p in thread.posts)
@@ -168,8 +161,7 @@ async def thread_summary(thread: Thread) -> str:
         "where commenters agree and disagree, notable arguments, and the overall "
         "community sentiment (positive / negative / mixed and why). Be concise and "
         "capture the actual mood — voz comments are often sarcastic or blunt. "
-        "Respond in both English and Vietnamese. Label each section clearly — "
-        "'English:' then 'Tiếng Việt:'. "
+        "Chỉ trả lời bằng tiếng Việt. "
         f"{PLAIN_TEXT_FORMAT_INSTRUCTION}",
         [],
         raw_contents=f"<thread_posts>\n{body}\n</thread_posts>",
@@ -186,10 +178,10 @@ async def fact_check(claim: str, messages: list[Message]) -> str:
         "Cross-reference this claim using BOTH the Telegram channel messages inside "
         "<channel_messages> AND your Google Search grounding to find current, "
         "authoritative information.\n\n"
-        "Start each language section with one of: SUPPORTED / CONTRADICTED / INSUFFICIENT EVIDENCE. "
+        "Start your response with one of: SUPPORTED / CONTRADICTED / INSUFFICIENT EVIDENCE. "
         "Then provide a 2-3 sentence explanation citing both channel evidence (channel + timestamp) "
         "and external sources where relevant. "
-        "Respond in both English and Vietnamese. Label each section clearly — 'English:' then 'Tiếng Việt:' "
+        "Respond in English only. "
         f"{PLAIN_TEXT_FORMAT_INSTRUCTION}"
     )
     contents = (

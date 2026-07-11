@@ -128,7 +128,7 @@ async def cmd_start(message: TgMessage) -> None:
         "      e.g. `/thread https://voz.vn/t/abc.123456/`\n"
         "/channels — Monitored channels and message counts\n\n"
         "Scheduled pushes: HN security digest 08:30 & 20:00, điểm báo 07:00 (VN time).\n"
-        "Analysis replies are bilingual: English + Tiếng Việt.",
+        "Analysis replies are in English; /paper and /thread reply in Tiếng Việt.",
         parse_mode=ParseMode.MARKDOWN,
     )
 
