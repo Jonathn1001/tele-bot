@@ -182,3 +182,39 @@ def test_clear_prompt_middleware_registered_between_owner_and_ratelimit():
     clear = kinds.index("ClearPromptOnCommandMiddleware")
     rate = kinds.index("RateLimitMiddleware")
     assert owner < clear < rate
+
+
+# ---------------------------------------------------------------------------
+# RateLimitMiddleware × prompt flow
+# ---------------------------------------------------------------------------
+
+async def test_prompt_answer_is_rate_limited():
+    mw = bot.RateLimitMiddleware(cooldown_seconds=60)
+    handler = AsyncMock()
+    state = _make_state(bot.PromptFlow.awaiting_claim.state)
+    first = _make_text_message("/summary")
+    await mw(handler, first, {"state": _make_state(None)})   # starts the cooldown
+    answer = _make_text_message("some claim to check")
+    answer.answer = AsyncMock()
+    await mw(handler, answer, {"state": state})
+    assert handler.call_count == 1          # second call blocked
+    assert "wait" in answer.answer.call_args[0][0].lower()
+
+
+async def test_bare_prompt_command_does_not_start_cooldown():
+    mw = bot.RateLimitMiddleware(cooldown_seconds=60)
+    handler = AsyncMock()
+    tap = _make_text_message("/factcheck")
+    await mw(handler, tap, {"state": _make_state(None)})
+    answer = _make_text_message("some claim to check")
+    state = _make_state(bot.PromptFlow.awaiting_claim.state)
+    await mw(handler, answer, {"state": state})
+    assert handler.call_count == 2          # both passed through
+
+
+async def test_plain_text_without_state_is_not_limited():
+    mw = bot.RateLimitMiddleware(cooldown_seconds=60)
+    handler = AsyncMock()
+    msg = _make_text_message("hello")
+    await mw(handler, msg, {"state": _make_state(None)})
+    handler.assert_called_once()

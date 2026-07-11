@@ -36,6 +36,10 @@ class OwnerOnlyMiddleware(BaseMiddleware):
 # Commands that trigger a paid Gemini API call — these get a cooldown.
 ANALYSIS_COMMANDS = ("/summary", "/threat", "/factcheck", "/hn", "/paper", "/thread")
 
+# Bare /factcheck or /thread only starts a prompt — no Gemini call, so no
+# cooldown; charging one would block the user's own answer seconds later.
+PROMPT_ONLY = ("/factcheck", "/thread")
+
 
 class RateLimitMiddleware(BaseMiddleware):
     """Cooldown between analysis commands so a runaway client can't drain the Gemini quota."""
@@ -51,7 +55,14 @@ class RateLimitMiddleware(BaseMiddleware):
         data: dict[str, Any],
     ) -> Any:
         text = getattr(event, "text", None) or ""
-        if self._cooldown <= 0 or not text.startswith(ANALYSIS_COMMANDS):
+        is_analysis = text.startswith(ANALYSIS_COMMANDS) and text.strip() not in PROMPT_ONLY
+        if not is_analysis:
+            # The prompt ANSWER is a plain message that triggers a Gemini
+            # call — the prefix check can't see it.
+            state = data.get("state")
+            if state is not None and await state.get_state() in PROMPT_STATES:
+                is_analysis = True
+        if self._cooldown <= 0 or not is_analysis:
             return await handler(event, data)
         now = monotonic()
         last = self._last_call.get(event.from_user.id)
@@ -134,6 +145,12 @@ class PromptFlow(StatesGroup):
 
     awaiting_claim = State()
     awaiting_thread_url = State()
+
+
+# Referenced by RateLimitMiddleware at call time (defined above, resolved lazily).
+PROMPT_STATES = frozenset(
+    {PromptFlow.awaiting_claim.state, PromptFlow.awaiting_thread_url.state}
+)
 
 
 def build_dispatcher(buffer: MessageBuffer, bot: Bot) -> Dispatcher:
