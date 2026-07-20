@@ -73,8 +73,8 @@ All config is read from environment variables (via `.env` + `python-dotenv`):
 | `DATABASE_SSL` | No | `require` | Set `disable` for a local/sidecar Postgres with no TLS endpoint |
 | `RETENTION_DAYS` | No | `30` | Days to keep archived messages (min 1) |
 | `PRUNE_INTERVAL_HOURS` | No | `24` | How often to run pruner in hours (min 1) |
-| `HN_DIGEST_TIMES` | No | `08:30,20:00` | HN security digest push times, Asia/Ho_Chi_Minh (empty disables) |
-| `PRESS_DIGEST_TIMES` | No | `07:00` | Vietnamese press digest push times, Asia/Ho_Chi_Minh (empty disables) |
+| `HN_DIGEST_TIMES` | No | `12:30` | HN security digest push times, Asia/Ho_Chi_Minh (empty disables) |
+| `PRESS_DIGEST_TIMES` | No | `12:30` | Vietnamese press digest push times, Asia/Ho_Chi_Minh (empty disables) |
 | `ALERT_KEYWORDS` | No | conflict/security list | Keywords that trigger a proactive owner alert on live messages (empty disables) |
 | `HEARTBEAT_PATH` | No | `/tmp/heartbeat` | Liveness file path for the watchdog + Docker healthcheck |
 

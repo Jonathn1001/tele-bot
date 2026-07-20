@@ -22,8 +22,8 @@ RETENTION_DAYS = max(1, int(os.environ.get("RETENTION_DAYS", "30")))        # mi
 PRUNE_INTERVAL_HOURS = max(1, int(os.environ.get("PRUNE_INTERVAL_HOURS", "24")))  # minimum 1 hour
 
 # Scheduled digest fire times, Asia/Ho_Chi_Minh ("HH:MM[,HH:MM...]"). Empty string disables.
-HN_DIGEST_TIMES = os.environ.get("HN_DIGEST_TIMES", "08:30,20:00")
-PRESS_DIGEST_TIMES = os.environ.get("PRESS_DIGEST_TIMES", "07:00")
+HN_DIGEST_TIMES = os.environ.get("HN_DIGEST_TIMES", "12:30")
+PRESS_DIGEST_TIMES = os.environ.get("PRESS_DIGEST_TIMES", "12:30")
 
 # Proactive alerts: push the owner when a live channel message contains any of
 # these keywords/phrases. Comma-separated; empty string disables alerting.
