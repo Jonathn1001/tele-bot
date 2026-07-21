@@ -31,8 +31,11 @@ extended with a write path (page creation).
 
 ## Notion data model (as observed)
 
-The weekly tasks are **not** a database. Each week is a **page** created by
-**duplicating a template under a shared parent page**. Structure of a week page
+The weekly tasks are **not** a database. Each week is a **page** under the parent
+**`📅 Weekly To-do Lists`** (`3a435e09628b81758610e824be221ded` — created + populated
+during this design; the existing July 20-26 page was moved under it). There is **no
+separate template**: the bot seeds next week by **cloning the current week's page**
+(the only page today). Structure of a week page
 (`👨‍💻 Weekly To-do List  (July 20 - July 26)`):
 
 - Title carries the **date range**: `Weekly To-do List (<Mon DD> - <Mon DD>)`.
@@ -102,11 +105,14 @@ class Week:     label: str; days: list[Day]; goals: list[str]
   and is **not** counted in the scoreboard (the scoreboard counts only the 7-day
   `to_do` checkboxes).
 
-**C. Create next week's page (clone the template)** —
-`create_next_week(today: date) -> str | None` returns the new page's id (or `None`).
+**C. Create next week's page (clone the current week)** —
+`create_next_week(today: date, source_page_id: str) -> str | None` returns the new
+page's id (or `None`). **`source_page_id` defaults to the current-week page** (the
+Sunday job passes the page it just reviewed); the optional `NOTION_TEMPLATE_PAGE_ID`
+overrides it with a fixed template when set.
 
 1. **Compute the target week.** From the Sunday run date, next Monday = `today + 1d`,
-   next Sunday = `today + 7d`. Build the title by taking the **template page's own
+   next Sunday = `today + 7d`. Build the title by taking the **source page's own
    title prefix** (everything before its last `(`) and appending
    `f"({start:%B} {start.day} - {end:%B} {end.day})"` → e.g.
    `Weekly To-do List  (July 27 - August 2)`. (`strftime("%-d")` is avoided; use
@@ -114,29 +120,29 @@ class Week:     label: str; days: list[Day]; goals: list[str]
 2. **Idempotency guard.** Call `find_current_week_page(next_monday)` first; if a page
    already covers next week, **skip** and log — never create a duplicate (guards
    against a double-fire or a page the user already made).
-3. **Read the template** (`GET /v1/pages/{NOTION_TEMPLATE_PAGE_ID}` for `icon` +
+3. **Read the source page** (`GET /v1/pages/{source_page_id}` for `icon` +
    `GET /v1/blocks/{id}/children` recursively) into a raw block tree.
 4. **Transform to a create payload** — pure `to_create_blocks(tree) -> list[dict]`:
    - Drop read-only fields (`id`, `created_time`, `last_edited_time`, `has_children`,
      `parent`); keep `type` + the type-specific object.
-   - **Reset every `to_do.checked` to `false`** (clone starts empty regardless of
-     the template's state).
+   - **Reset every `to_do.checked` to `false`** — the current week's ticks do **not**
+     carry into next week; the task *text* does (recurring tasks are the point).
    - Rebuild `rich_text`: keep `text` parts with their `annotations` (colors are
      writable, preserved). **Unsupported mention types (Notion custom emoji like
      `:programming:`) degrade to a plain `text` element from their `plain_text`** —
      accepted minor fidelity loss.
    - Skip block types the API cannot create; log each skipped type.
 5. **Create in one request.** `POST /v1/pages` with `parent={page_id: NOTION_TODO_PARENT_ID}`,
-   `icon` (copied from template), `properties={title:[...]}`, and `children=[…]`.
-   The template's shape `page → column_list → column → to_do` is **exactly two levels
+   `icon` (copied from source), `properties={title:[...]}`, and `children=[…]`.
+   The shape `page → column_list → column → to_do` is **exactly two levels
    of nested children**, within Notion's single-request limits (≤2 nesting levels,
    ≤100 blocks per `children` array, ≤1000 total — verified against
    developers.notion.com). A `column_list` must have ≥2 columns and each `column`
-   ≥1 child — satisfied by the 7-day template.
-   - **Robustness guard:** `to_create_blocks` validates the precondition; if a future
-     template edit exceeds 2 nesting levels or a 100-block array, the overflow is
-     appended in follow-up `PATCH /v1/blocks/{id}/children` calls (needs returned ids)
-     rather than silently truncated.
+   ≥1 child — satisfied by the 7-day layout.
+   - **Robustness guard:** `to_create_blocks` validates the precondition; if the page
+     ever exceeds 2 nesting levels or a 100-block array, the overflow is appended in
+     follow-up `PATCH /v1/blocks/{id}/children` calls (needs returned ids) rather than
+     silently truncated.
 
 **Failure policy:** any network / parse error → `find_current_week_page` returns
 `None`; `fetch_week` and `create_next_week` raise, caught by the caller.
@@ -200,15 +206,17 @@ async def weekly_review_job() -> None:
         week = await notion.fetch_week(page.id)
         text = await analyzer.weekly_review(week)
         await send_to_owner(bot, f"📝 Weekly Review — {week.label}\n\n{text}")
-    # 2. Create next week's page (only if a template is configured). Isolated.
-    if config.AUTOCREATE_ENABLED:
+    # 2. Clone the reviewed page into next week's page. Isolated from the review.
+    #    Needs a source page — skip if this week's page wasn't found.
+    if config.AUTOCREATE_ENABLED and page is not None:
         try:
-            new_id = await notion.create_next_week(now.date())
+            new_id = await notion.create_next_week(now.date(), source_page_id=page.id)
             if new_id:
                 await send_to_owner(bot, "🆕 Next week's to-do page is ready.")
+            # new_id None → already existed (idempotency); stay quiet.
         except Exception:
             logger.exception("weekly: create_next_week failed")
-            await send_to_owner(bot, "⚠️ Couldn't create next week's page — check the template.")
+            await send_to_owner(bot, "⚠️ Couldn't create next week's page.")
 ```
 
 Registered in `main.py`'s `jobs` list, gated on `WEEKLY_ENABLED`:
@@ -243,9 +251,10 @@ On-demand triggers so each half is testable without waiting for Sunday.
 | Var | Required | Default | Description |
 |---|---|---|---|
 | `NOTION_API_KEY` | No | `""` | Notion internal integration token (secret); empty disables the weekly feature |
-| `NOTION_TODO_PARENT_ID` | No | `""` | Parent page ID whose child pages are the weekly to-do lists; empty disables |
-| `NOTION_TEMPLATE_PAGE_ID` | No | `""` | Template page cloned into next week; empty disables **auto-create** (review still runs) |
+| `NOTION_TODO_PARENT_ID` | No | `""` | Parent page ID holding the weekly to-do pages (`3a435e09628b81758610e824be221ded`); empty disables |
 | `WEEKLY_REVIEW_TIME` | No | `19:00` | Sunday push time, `Asia/Ho_Chi_Minh`; empty disables the schedule |
+| `WEEKLY_AUTOCREATE` | No | `true` | `false` disables cloning next week's page (review still runs) |
+| `NOTION_TEMPLATE_PAGE_ID` | No | `""` | Optional: clone this fixed page instead of the current week. Empty → clone the current-week page |
 
 **Optional, not required — disable-when-empty.** Read via `os.environ.get(..., "")`,
 not `os.environ["..."]`. This matches the codebase's optional-feature pattern
@@ -255,27 +264,29 @@ so a deployed bot missing these must keep booting (HN, press, alerts unaffected)
 single derived flag gates both entry points:
 ```python
 WEEKLY_ENABLED     = bool(NOTION_API_KEY and NOTION_TODO_PARENT_ID)
-AUTOCREATE_ENABLED = bool(WEEKLY_ENABLED and NOTION_TEMPLATE_PAGE_ID)
+AUTOCREATE_ENABLED = bool(WEEKLY_ENABLED and WEEKLY_AUTOCREATE)   # WEEKLY_AUTOCREATE parsed as bool, default True
 ```
 - `WEEKLY_ENABLED` false → the scheduled job is **not registered** and `/weekly`
   replies "Weekly review isn't configured." (logged once at startup).
-- `AUTOCREATE_ENABLED` false → the Sunday job skips the create step and `/newweek`
-  replies "Auto-create isn't configured." Review still runs when `WEEKLY_ENABLED`.
+- `AUTOCREATE_ENABLED` false → the Sunday job skips the clone step and `/newweek`
+  replies "Auto-create is off." Review still runs when `WEEKLY_ENABLED`. Auto-create
+  needs no extra credential — it clones the current-week page found under the parent.
 
 Added to `config.py`, `.env.example`, and the CLAUDE.md config table + a "Weekly
 review" architecture paragraph.
 
 ## One-time setup (documented for the user)
 
+The parent page `📅 Weekly To-do Lists` (`3a435e09628b81758610e824be221ded`) and the
+move of the July 20-26 page under it are **already done**. Remaining, one-time:
+
 1. Create a Notion **internal integration** at notion.so/my-integrations → copy the
    token → `NOTION_API_KEY`.
-2. Open the **parent page** that holds the weekly to-do pages → `•••` → *Connections* →
-   add the integration. Child pages (new weeks) inherit access — this also grants the
-   template page if it lives under the parent (otherwise share it too).
-3. Copy the parent page ID (the 32-hex in its URL) → `NOTION_TODO_PARENT_ID`.
-4. (Auto-create) Copy the **template page** ID → `NOTION_TEMPLATE_PAGE_ID`. Leave empty
-   to skip auto-create and keep only the review.
-5. Restart the bot (`docker compose up -d --build`).
+2. Open `📅 Weekly To-do Lists` → `•••` → *Connections* → add the integration. Every
+   weekly page under it (current + future clones) inherits access.
+3. Set `NOTION_TODO_PARENT_ID=3a435e09628b81758610e824be221ded`.
+4. Restart the bot (`docker compose up -d --build`). Auto-create is on by default; set
+   `WEEKLY_AUTOCREATE=false` to keep only the review.
 
 ## Testing
 
@@ -294,11 +305,11 @@ review" architecture paragraph.
   preserved; a custom-emoji mention degrades to a `text` element from `plain_text`;
   unsupported block type skipped + logged.
 - Next-week title/date computation: from a Sunday date → correct Mon–Sun range and
-  title, reusing the template's prefix; cross-month (`July 27 - August 2`) and
+  title, reusing the source page's prefix; cross-month (`July 27 - August 2`) and
   cross-year (`Dec 28 - Jan 3`) formatted correctly.
 - `create_next_week` idempotency: when `find_current_week_page(next_monday)` already
   returns a page → returns `None` and issues **no** `POST` (mock asserts not called).
-- Nesting/array precondition: a 2-level template builds a single-request payload; a
+- Nesting/array precondition: a 2-level source builds a single-request payload; a
   synthetic 3-level or >100-array tree routes overflow to append calls (or is flagged),
   never silently truncated.
 - Soft-fail: network error → `find_current_week_page` returns `None`; `fetch_week` /
@@ -312,23 +323,18 @@ review" architecture paragraph.
   single `Gym` bucket and no-emoji items land in `Other`. Empty week returns the fixed
   reply. Gemini call mocked.
 
-## Open questions
+## Resolved / open
 
-- **Parent is a page, not a database.** Design assumes `NOTION_TODO_PARENT_ID` is a
-  page whose children are `child_page` blocks. Could not verify programmatically (the
-  July 20-26 page returned an empty `ancestor-path`). To confirm at setup: the parent's
-  URL should be a normal page, and `GET /v1/blocks/{id}/children` should return the
-  weekly pages as `child_page` blocks. If it turns out to be a **database**, discovery
-  changes to a data-source query — a localized change to `find_current_week_page` only.
-- **Sunday 19:00 undercounts Sunday itself** (its tasks likely still unchecked at 7pm).
-  Accepted per the chosen schedule; revisit to 22:00 if the recap reads too harsh.
-- **Template page ID + location.** Need the template page's URL to set
-  `NOTION_TEMPLATE_PAGE_ID` and confirm it's shared with the integration. Is the
-  template a dedicated empty page (preferred), or should the bot clone the *current*
-  week? Design assumes a dedicated template (checkboxes reset regardless).
-- **Custom-emoji fidelity.** `:programming:` (workspace custom emoji) can't be
-  recreated via the API and degrades to plain text in the clone. Acceptable? If not,
-  swap that item's icon to a standard unicode emoji in the template.
+- **Parent — resolved.** `📅 Weekly To-do Lists` (`3a435e09628b81758610e824be221ded`)
+  created and the July 20-26 page moved under it; verified it's a **page** whose child
+  is a `child_page`. `find_current_week_page` (parent children → `child_page`) works.
+- **Template — resolved.** No dedicated template; the bot clones the **current-week**
+  page (checkboxes reset). Optional `NOTION_TEMPLATE_PAGE_ID` override kept for later.
+- **Sunday 19:00 undercounts Sunday itself** (open, accepted) — its tasks are likely
+  still unchecked at 7pm. Revisit to 22:00 if the recap reads too harsh.
+- **Custom-emoji fidelity** (open, accepted) — `:programming:` (workspace custom emoji)
+  can't be recreated via the API and degrades to plain text in the clone. To keep it,
+  swap that item to a standard unicode emoji in the source page.
 
 ## Out of scope (YAGNI)
 
