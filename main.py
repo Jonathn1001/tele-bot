@@ -23,6 +23,36 @@ logger = logging.getLogger(__name__)
 HEARTBEAT_INTERVAL = 30  # seconds between liveness pings; watchdog trips at 180s
 
 
+async def run_weekly_review(bot: Bot, now: datetime | None = None) -> None:
+    """Sunday-only: push this week's review, then clone next week's page. The two
+    halves are isolated — a review (fetch/analyze) failure still lets the clone run
+    (it re-reads the source page), and a clone failure never blocks the review.
+    Module-level (not a closure) so the isolation contract is unit-testable."""
+    now = now or datetime.now(VN_TZ)
+    if now.weekday() != 6:  # 6 = Sunday
+        return
+    page = await notion.find_current_week_page(now.date())  # fails soft → None
+    if page is None:
+        await send_to_owner(bot, "📝 Weekly review: couldn't find this week's Notion page.")
+    else:
+        try:
+            week = await notion.fetch_week(page.id)
+            text = await analyzer.weekly_review(week)
+            await send_to_owner(bot, f"📝 Weekly Review — {week.label}\n\n{text}")
+        except Exception:
+            logger.exception("weekly: review failed")
+            await send_to_owner(bot, "📝 Weekly review failed — couldn't read this week's page.")
+    # Clone runs regardless of the review outcome; it only needs the located page.
+    if config.AUTOCREATE_ENABLED and page is not None:
+        try:
+            new_id = await notion.create_next_week(now.date(), source_page_id=page.id)
+            if new_id:
+                await send_to_owner(bot, "🆕 Next week's to-do page is ready.")
+        except Exception:
+            logger.exception("weekly: create_next_week failed")
+            await send_to_owner(bot, "⚠️ Couldn't create next week's page.")
+
+
 async def main() -> None:
     pool = await db.init_pool(config.DATABASE_URL, config.DATABASE_CA_CERT, config.DATABASE_SSL)
     buffer = MessageBuffer(maxsize=config.BUFFER_SIZE)
@@ -67,27 +97,8 @@ async def main() -> None:
         await send_to_owner(bot, f"📰 Điểm báo sáng (voz)\n\n{text}")
 
     async def weekly_review_job() -> None:
-        # Fires daily at WEEKLY_REVIEW_TIME; only acts on Sunday.
-        now = datetime.now(VN_TZ)
-        if now.weekday() != 6:  # 6 = Sunday
-            return
-        # 1. Review this week — delivered first so a later create failure can't lose it.
-        page = await notion.find_current_week_page(now.date())
-        if page is None:
-            await send_to_owner(bot, "📝 Weekly review: couldn't find this week's Notion page.")
-        else:
-            week = await notion.fetch_week(page.id)
-            text = await analyzer.weekly_review(week)
-            await send_to_owner(bot, f"📝 Weekly Review — {week.label}\n\n{text}")
-        # 2. Clone the reviewed page into next week's page. Isolated from the review.
-        if config.AUTOCREATE_ENABLED and page is not None:
-            try:
-                new_id = await notion.create_next_week(now.date(), source_page_id=page.id)
-                if new_id:
-                    await send_to_owner(bot, "🆕 Next week's to-do page is ready.")
-            except Exception:
-                logger.exception("weekly: create_next_week failed")
-                await send_to_owner(bot, "⚠️ Couldn't create next week's page.")
+        # Fires daily at WEEKLY_REVIEW_TIME; run_weekly_review self-guards to Sunday.
+        await run_weekly_review(bot)
 
     jobs: list[Job] = [
         *((t, "hn_digest", hn_job) for t in parse_times(config.HN_DIGEST_TIMES)),

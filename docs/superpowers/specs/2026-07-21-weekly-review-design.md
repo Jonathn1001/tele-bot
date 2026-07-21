@@ -139,10 +139,12 @@ overrides it with a fixed template when set.
    ≤100 blocks per `children` array, ≤1000 total — verified against
    developers.notion.com). A `column_list` must have ≥2 columns and each `column`
    ≥1 child — satisfied by the 7-day layout.
-   - **Robustness guard:** `to_create_blocks` validates the precondition; if the page
-     ever exceeds 2 nesting levels or a 100-block array, the overflow is appended in
-     follow-up `PATCH /v1/blocks/{id}/children` calls (needs returned ids) rather than
-     silently truncated.
+   - **Robustness guard (implemented as skip-and-log):** `to_create_blocks` caps
+     nesting at Notion's 2 levels — children deeper than `column_list → column → to_do`
+     (e.g. a to_do sub-task) are **dropped with a logged warning**, never sent, so one
+     stray deep block can't make Notion reject the whole `POST`. An over-100 children
+     array is logged too. A full `PATCH`-append overflow path is **out of scope** — the
+     template never exceeds the limit; verified live (the real clone POSTed in one request).
 
 **Failure policy:** any network / parse error → `find_current_week_page` returns
 `None`; `fetch_week` and `create_next_week` raise, caught by the caller.
@@ -193,27 +195,33 @@ Scheduler fires **daily** at each configured time and has no weekday concept. Ra
 than change the scheduler, the **job self-guards** (minimal, matches the existing job
 style in `main.py`):
 
+The job body is a **module-level** `run_weekly_review(bot, now=None)` (not a closure)
+so the Sunday guard and the review↔create isolation are unit-testable. The review
+block is wrapped so a `fetch_week`/analyze failure still (a) notifies the owner and
+(b) lets the independent clone run (the registered `weekly_review_job` just calls it):
+
 ```python
-async def weekly_review_job() -> None:
-    now = datetime.now(VN_TZ)
+async def run_weekly_review(bot, now=None) -> None:
+    now = now or datetime.now(VN_TZ)
     if now.weekday() != 6:  # 6 = Sunday
         return
-    # 1. Review this week (delivered first — must survive a later create failure).
-    page = await notion.find_current_week_page(now.date())
+    page = await notion.find_current_week_page(now.date())  # fails soft → None
     if page is None:
         await send_to_owner(bot, "📝 Weekly review: couldn't find this week's Notion page.")
     else:
-        week = await notion.fetch_week(page.id)
-        text = await analyzer.weekly_review(week)
-        await send_to_owner(bot, f"📝 Weekly Review — {week.label}\n\n{text}")
-    # 2. Clone the reviewed page into next week's page. Isolated from the review.
-    #    Needs a source page — skip if this week's page wasn't found.
+        try:
+            week = await notion.fetch_week(page.id)
+            text = await analyzer.weekly_review(week)
+            await send_to_owner(bot, f"📝 Weekly Review — {week.label}\n\n{text}")
+        except Exception:
+            logger.exception("weekly: review failed")
+            await send_to_owner(bot, "📝 Weekly review failed — couldn't read this week's page.")
+    # Clone runs regardless of the review outcome; it only needs the located page.
     if config.AUTOCREATE_ENABLED and page is not None:
         try:
             new_id = await notion.create_next_week(now.date(), source_page_id=page.id)
             if new_id:
                 await send_to_owner(bot, "🆕 Next week's to-do page is ready.")
-            # new_id None → already existed (idempotency); stay quiet.
         except Exception:
             logger.exception("weekly: create_next_week failed")
             await send_to_owner(bot, "⚠️ Couldn't create next week's page.")

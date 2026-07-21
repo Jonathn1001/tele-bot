@@ -219,9 +219,17 @@ def _clean_rich_text(rich_text: list[dict] | None) -> list[dict]:
     return out
 
 
-def _transform_block(b: dict) -> dict | None:
+# Notion accepts at most 2 levels of nested children and 100 blocks per array in
+# a single create request. The template (page → column_list → column → to_do) sits
+# exactly at the 2-level ceiling; anything deeper (e.g. a to_do sub-task) is dropped
+# with a warning rather than sent and rejecting the whole POST.
+_MAX_CREATE_DEPTH = 2
+_MAX_CHILDREN_PER_ARRAY = 100
+
+
+def _transform_block(b: dict, depth: int = 0) -> dict | None:
     """Turn a fetched block into a create payload: strip read-only fields, reset
-    to_do checkboxes, recurse into nested children (column_list → column → …)."""
+    to_do checkboxes, recurse into nested children up to Notion's 2-level limit."""
     t = b.get("type", "")
     if t not in CREATABLE_TYPES:
         logger.info("Notion clone: skipping uncreatable block type %r", t)
@@ -240,16 +248,27 @@ def _transform_block(b: dict) -> dict | None:
         content["icon"] = src["icon"]
     kids = b.get("_children")
     if kids:
-        content["children"] = to_create_blocks(kids)
+        if depth < _MAX_CREATE_DEPTH:
+            content["children"] = to_create_blocks(kids, depth + 1)
+        else:
+            logger.warning(
+                "Notion clone: dropping children of %r beyond Notion's %d-level create limit",
+                t, _MAX_CREATE_DEPTH,
+            )
     return {"object": "block", "type": t, t: content}
 
 
-def to_create_blocks(blocks: list[dict]) -> list[dict]:
+def to_create_blocks(blocks: list[dict], depth: int = 0) -> list[dict]:
     out: list[dict] = []
     for b in blocks:
-        new = _transform_block(b)
+        new = _transform_block(b, depth)
         if new is not None:
             out.append(new)
+    if len(out) > _MAX_CHILDREN_PER_ARRAY:
+        logger.warning(
+            "Notion clone: %d blocks in one children array exceeds Notion's %d-per-request limit; "
+            "the create may be rejected", len(out), _MAX_CHILDREN_PER_ARRAY,
+        )
     return out
 
 
@@ -266,7 +285,11 @@ def _next_monday(today: date) -> date:
 
 
 def _next_week_title(prefix: str, start: date, end: date) -> str:
-    return f"{prefix}({start:%B} {start.day} - {end:%B} {end.day})"
+    # Index _MONTH_NAMES rather than strftime("%B") — %B is locale-dependent and
+    # would both corrupt the title and break the English-only re-parse under a
+    # non-English server locale.
+    return (f"{prefix}({_MONTH_NAMES[start.month - 1]} {start.day} - "
+            f"{_MONTH_NAMES[end.month - 1]} {end.day})")
 
 
 # --------------------------------------------------------------------------- #

@@ -193,6 +193,19 @@ def test_to_create_recurses_into_columns():
     assert todo["type"] == "to_do" and todo["to_do"]["checked"] is False
 
 
+def test_to_create_drops_children_beyond_two_levels():
+    # column_list(0) -> column(1) -> to_do(2) -> sub to_do(3): the 3rd nesting
+    # level exceeds Notion's create limit and must be dropped, not sent (which
+    # would make Notion reject the entire POST).
+    parent_todo = {"type": "to_do", "to_do": {"rich_text": _rt("parent"), "checked": True},
+                   "_children": [_todo("sub-task", True)]}
+    tree = [_column_list([_column([parent_todo])])]
+    out = notion.to_create_blocks(tree)
+    todo = out[0]["column_list"]["children"][0]["column"]["children"][0]
+    assert todo["type"] == "to_do"
+    assert "children" not in todo["to_do"]  # 3rd-level children dropped
+
+
 # --------------------------------------------------------------------------- #
 # title / date helpers
 # --------------------------------------------------------------------------- #
