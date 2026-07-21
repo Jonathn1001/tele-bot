@@ -134,8 +134,11 @@ def parse_title_range(title: str, today: date) -> tuple[date, date] | None:
     return start, end
 
 
-def _select_week_page(children: list[dict], today: date) -> WeekPage | None:
-    """Pick the child_page whose title range contains `today`; else the newest."""
+def _select_week_page(children: list[dict], today: date, strict: bool = False) -> WeekPage | None:
+    """Pick the child_page whose title range contains `today`. When `strict`,
+    return None if none contains it (used by the create idempotency guard —
+    a fallback there would mistake this week's page for next week's and never
+    create). When not strict, fall back to the newest candidate (lenient find)."""
     candidates: list[WeekPage] = []
     for b in children:
         if b.get("type") != "child_page":
@@ -151,6 +154,8 @@ def _select_week_page(children: list[dict], today: date) -> WeekPage | None:
     for c in candidates:
         if c.start is not None and c.end is not None and c.start <= today <= c.end:
             return c
+    if strict:
+        return None
     if candidates:
         newest = max(candidates, key=lambda c: c.created_time)
         logger.warning("Notion: no week page contains %s; using newest %r", today, newest.title)
@@ -310,9 +315,9 @@ async def _get_page(client: httpx.AsyncClient, page_id: str) -> dict:
     return r.json()
 
 
-async def _find_week_page(client: httpx.AsyncClient, today: date) -> WeekPage | None:
+async def _find_week_page(client: httpx.AsyncClient, today: date, strict: bool = False) -> WeekPage | None:
     children = await _get_children(client, config.NOTION_TODO_PARENT_ID)
-    return _select_week_page(children, today)
+    return _select_week_page(children, today, strict=strict)
 
 
 async def find_current_week_page(today: date) -> WeekPage | None:
@@ -342,7 +347,9 @@ async def create_next_week(today: date, source_page_id: str) -> str | None:
     end = start + timedelta(days=6)
     source_id = config.NOTION_TEMPLATE_PAGE_ID or source_page_id
     async with _client() as client:
-        if await _find_week_page(client, start) is not None:
+        # strict: only skip if a page actually covers next week — the lenient
+        # fallback would return this week's page and block every create.
+        if await _find_week_page(client, start, strict=True) is not None:
             logger.info("Notion: next week's page already exists; skipping create")
             return None
         page = await _get_page(client, source_id)

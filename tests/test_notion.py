@@ -114,6 +114,15 @@ def test_select_empty_returns_none():
     assert notion._select_week_page([], date(2026, 7, 21)) is None
 
 
+def test_select_strict_returns_none_when_nothing_contains_date():
+    # Regression: the create idempotency guard must NOT fall back to newest,
+    # or it mistakes this week's page for next week's and never creates.
+    children = [_child_page("cur", "Weekly (July 20 - July 26)", "2026-07-19")]
+    assert notion._select_week_page(children, date(2026, 7, 27), strict=True) is None
+    # Non-strict still falls back to the newest candidate.
+    assert notion._select_week_page(children, date(2026, 7, 27), strict=False).id == "cur"
+
+
 # --------------------------------------------------------------------------- #
 # parse_week
 # --------------------------------------------------------------------------- #
@@ -204,7 +213,8 @@ def test_title_prefix_and_next_week_title():
 
 
 # --------------------------------------------------------------------------- #
-# create_next_week — network mocked
+# create_next_week — network mocked (drives the REAL idempotency guard, not a
+# stubbed _find_week_page, so the strict-guard regression stays covered)
 # --------------------------------------------------------------------------- #
 
 class _FakeResp:
@@ -219,11 +229,16 @@ class _FakeResp:
 
 
 class _FakeClient:
-    """Minimal async-context httpx stand-in for create_next_week."""
+    """Async-context httpx stand-in: serves the parent's children (idempotency
+    guard) and the source page + its block tree (the clone)."""
 
-    def __init__(self, page: dict, tree: list[dict]):
-        self._page = page
-        self._tree = tree
+    def __init__(self, parent_children, source_page, source_tree,
+                 parent_id="parent-id", source_id="src"):
+        self.parent_children = parent_children
+        self.source_page = source_page
+        self.source_tree = source_tree
+        self.parent_id = parent_id
+        self.source_id = source_id
         self.post_payload: dict | None = None
 
     async def __aenter__(self):
@@ -233,10 +248,12 @@ class _FakeClient:
         return False
 
     async def get(self, url, params=None):
-        if url.startswith("/pages/"):
-            return _FakeResp(self._page)
-        if "/children" in url:
-            return _FakeResp({"results": self._tree, "has_more": False})
+        if url == f"/blocks/{self.parent_id}/children":
+            return _FakeResp({"results": self.parent_children, "has_more": False})
+        if url == f"/pages/{self.source_id}":
+            return _FakeResp(self.source_page)
+        if url == f"/blocks/{self.source_id}/children":
+            return _FakeResp({"results": self.source_tree, "has_more": False})
         raise AssertionError(f"unexpected GET {url}")
 
     async def post(self, url, json=None):
@@ -244,41 +261,55 @@ class _FakeClient:
         return _FakeResp({"id": "new-page-id"})
 
 
-async def test_create_next_week_idempotent_skips_when_exists(monkeypatch):
-    fake = _FakeClient(page={}, tree=[])
+def _source_page() -> dict:
+    return {
+        "icon": {"type": "emoji", "emoji": "\U0001f469‍\U0001f4bb"},
+        "properties": {"Name": {"type": "title",
+                                "title": _rt("Weekly To-do List  (July 20 - July 26)")}},
+    }
 
-    async def _existing(client, day):
-        return WeekPage(id="already", title="Weekly (July 27 - August 2)")
 
+async def test_create_next_week_idempotent_skips_when_next_week_exists(monkeypatch):
+    # Parent already has next week's page → strict guard finds it → skip.
+    fake = _FakeClient(
+        parent_children=[
+            _child_page("cur", "Weekly (July 20 - July 26)", "2026-07-19"),
+            _child_page("nxt", "Weekly (July 27 - August 2)", "2026-07-26"),
+        ],
+        source_page=_source_page(),
+        source_tree=[_todo("Running", True)],
+    )
     monkeypatch.setattr(notion, "_client", lambda: fake)
-    monkeypatch.setattr(notion, "_find_week_page", _existing)
+    monkeypatch.setattr(config, "NOTION_TODO_PARENT_ID", "parent-id")
+    monkeypatch.setattr(config, "NOTION_TEMPLATE_PAGE_ID", "")
     result = await notion.create_next_week(date(2026, 7, 26), source_page_id="src")
     assert result is None
     assert fake.post_payload is None  # no page created
 
 
-async def test_create_next_week_posts_reset_clone(monkeypatch):
-    page = {
-        "icon": {"type": "emoji", "emoji": "👨‍💻"},
-        "properties": {"Name": {"type": "title", "title": _rt("Weekly To-do List  (July 20 - July 26)")}},
-    }
-    tree = [_todo("🏃 Running", True)]  # flat: no has_children → no recursion
-    fake = _FakeClient(page=page, tree=tree)
-
-    async def _none(client, day):
-        return None
-
+async def test_create_next_week_posts_when_only_this_week_exists(monkeypatch):
+    # Regression: only this week exists → strict guard returns None → create
+    # proceeds and POSTs a reset clone. The fallback bug returned this week's
+    # page here and skipped forever.
+    fake = _FakeClient(
+        parent_children=[_child_page("cur", "Weekly (July 20 - July 26)", "2026-07-19")],
+        source_page=_source_page(),
+        source_tree=[_todo("Running", True)],  # flat: no recursion
+    )
     monkeypatch.setattr(notion, "_client", lambda: fake)
-    monkeypatch.setattr(notion, "_find_week_page", _none)
     monkeypatch.setattr(config, "NOTION_TODO_PARENT_ID", "parent-id")
     monkeypatch.setattr(config, "NOTION_TEMPLATE_PAGE_ID", "")
 
     result = await notion.create_next_week(date(2026, 7, 26), source_page_id="src")
 
     assert result == "new-page-id"
-    payload = fake.post_payload
+    _assert_reset_clone(fake.post_payload)
+
+
+def _assert_reset_clone(payload: dict) -> None:
+    assert payload is not None
     assert payload["parent"] == {"page_id": "parent-id"}
     title = payload["properties"]["title"]["title"][0]["text"]["content"]
     assert title == "Weekly To-do List  (July 27 - August 2)"
-    assert payload["icon"] == {"type": "emoji", "emoji": "👨‍💻"}
+    assert payload["icon"]["type"] == "emoji"
     assert payload["children"][0]["to_do"]["checked"] is False  # reset on clone
