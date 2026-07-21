@@ -13,6 +13,7 @@ from datetime import datetime
 
 import analyzer
 from buffer import Message
+from notion import Day, Task, Week
 
 
 def _make_msgs(*texts: str) -> list[Message]:
@@ -188,3 +189,47 @@ async def test_system_instruction_marks_data_untrusted():
     with patch.object(analyzer, "_client", mock_client):
         await analyzer.summarize(msgs)
     assert analyzer.UNTRUSTED_DATA_NOTICE in _system_instruction(mock_client)
+
+
+# ---------------------------------------------------------------------------
+# Weekly review — code computes the scoreboard; Gemini only narrates
+# ---------------------------------------------------------------------------
+
+def test_weekly_scoreboard_collapses_gym_and_buckets_other():
+    week = Week(
+        label="W",
+        days=[
+            Day("Mon", [Task("🔥 Chest", True), Task("🔥 Back", False)]),
+            Day("Tue", [Task("🔥 Leg", True), Task("🏃 Running", False), Task("misc thing", True)]),
+        ],
+    )
+    total, done, per_cat, per_day = analyzer._weekly_scoreboard(week)
+    assert total == 5
+    assert done == 3
+    assert per_cat["Gym"] == [2, 3]        # 🔥 Chest/Back/Leg → one bucket, 2 of 3 done
+    assert per_cat["Running"] == [0, 1]
+    assert per_cat["Other"] == [1, 1]      # no known emoji → Other
+    assert ("Mon", 1, 2) in per_day
+
+
+async def test_weekly_review_empty_week_returns_fixed_reply():
+    week = Week(label="W", days=[Day("Mon", [])])
+    # No Gemini call on the empty path — patch would be unused.
+    result = await analyzer.weekly_review(week)
+    assert result == analyzer.NO_TASKS_REPLY
+
+
+async def test_weekly_review_narrates_and_delimits_data():
+    week = Week(label="Week X", days=[Day("Mon", [Task("🏃 Running", True)])])
+    mock_client = _mock_client("Recap ...")
+    with patch.object(analyzer, "_client", mock_client):
+        result = await analyzer.weekly_review(week)
+    assert result == "Recap ..."
+    contents = mock_client.models.generate_content.call_args[1]["contents"]
+    assert contents.startswith("<weekly_tasks>")
+    assert contents.endswith("</weekly_tasks>")
+    assert "🏃 Running" in contents
+    system = _system_instruction(mock_client)
+    assert "productivity coach" in system
+    assert ENGLISH_ONLY_INSTRUCTION in system
+    assert analyzer.UNTRUSTED_DATA_NOTICE in system

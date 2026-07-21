@@ -68,6 +68,7 @@ def test_quick_keyboard_layout():
         "/summary", "/threat",
         "/hn", "/paper",
         "/factcheck", "/thread",
+        "/weekly", "/newweek",
         "/channels",
     ]
 
@@ -80,7 +81,7 @@ async def test_setup_bot_commands_registers_menu():
     names = [c.command for c in commands]
     assert names == [
         "summary", "threat", "factcheck", "hn",
-        "paper", "thread", "channels", "cancel",
+        "paper", "thread", "weekly", "newweek", "channels", "cancel",
     ]
 
 

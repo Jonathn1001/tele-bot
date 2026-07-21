@@ -1,5 +1,6 @@
 import asyncio
 import logging
+from datetime import datetime
 
 from aiogram import Bot
 from aiogram.client.default import DefaultBotProperties
@@ -10,11 +11,12 @@ import config
 import db
 import health
 import hn
+import notion
 from alerts import AlertMatcher
 from bot import build_dispatcher, build_press_report, send_to_owner, setup_bot_commands
 from buffer import Message, MessageBuffer
 from crawler import TelegramCrawler
-from scheduler import Job, parse_times, run_scheduler
+from scheduler import VN_TZ, Job, parse_times, run_scheduler
 
 logger = logging.getLogger(__name__)
 
@@ -64,9 +66,36 @@ async def main() -> None:
         text = await build_press_report()
         await send_to_owner(bot, f"📰 Điểm báo sáng (voz)\n\n{text}")
 
+    async def weekly_review_job() -> None:
+        # Fires daily at WEEKLY_REVIEW_TIME; only acts on Sunday.
+        now = datetime.now(VN_TZ)
+        if now.weekday() != 6:  # 6 = Sunday
+            return
+        # 1. Review this week — delivered first so a later create failure can't lose it.
+        page = await notion.find_current_week_page(now.date())
+        if page is None:
+            await send_to_owner(bot, "📝 Weekly review: couldn't find this week's Notion page.")
+        else:
+            week = await notion.fetch_week(page.id)
+            text = await analyzer.weekly_review(week)
+            await send_to_owner(bot, f"📝 Weekly Review — {week.label}\n\n{text}")
+        # 2. Clone the reviewed page into next week's page. Isolated from the review.
+        if config.AUTOCREATE_ENABLED and page is not None:
+            try:
+                new_id = await notion.create_next_week(now.date(), source_page_id=page.id)
+                if new_id:
+                    await send_to_owner(bot, "🆕 Next week's to-do page is ready.")
+            except Exception:
+                logger.exception("weekly: create_next_week failed")
+                await send_to_owner(bot, "⚠️ Couldn't create next week's page.")
+
     jobs: list[Job] = [
         *((t, "hn_digest", hn_job) for t in parse_times(config.HN_DIGEST_TIMES)),
         *((t, "press_digest", press_job) for t in parse_times(config.PRESS_DIGEST_TIMES)),
+        *(
+            (t, "weekly_review", weekly_review_job)
+            for t in (parse_times(config.WEEKLY_REVIEW_TIME) if config.WEEKLY_ENABLED else [])
+        ),
     ]
 
     health.touch()  # seed the heartbeat before the watchdog's grace period starts
