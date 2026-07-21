@@ -25,6 +25,19 @@ PRUNE_INTERVAL_HOURS = max(1, int(os.environ.get("PRUNE_INTERVAL_HOURS", "24")))
 HN_DIGEST_TIMES = os.environ.get("HN_DIGEST_TIMES", "12:30")
 PRESS_DIGEST_TIMES = os.environ.get("PRESS_DIGEST_TIMES", "12:30")
 
+# --- Weekly review (Notion → Gemini → Telegram) ---
+# All optional: disable-when-empty, so a deployment without Notion still boots
+# (unlike the required OWNER_ID / DATABASE_URL). See docs spec 2026-07-21.
+NOTION_API_KEY = os.environ.get("NOTION_API_KEY", "")               # internal integration token (secret)
+NOTION_TODO_PARENT_ID = os.environ.get("NOTION_TODO_PARENT_ID", "") # parent page holding the weekly to-do pages
+NOTION_TEMPLATE_PAGE_ID = os.environ.get("NOTION_TEMPLATE_PAGE_ID", "")  # optional clone-source override; empty → clone current week
+WEEKLY_REVIEW_TIME = os.environ.get("WEEKLY_REVIEW_TIME", "19:00")  # Sunday push time, Asia/Ho_Chi_Minh; empty disables schedule
+_WEEKLY_AUTOCREATE_RAW = os.environ.get("WEEKLY_AUTOCREATE", "true").strip().lower()
+WEEKLY_AUTOCREATE = _WEEKLY_AUTOCREATE_RAW not in ("0", "false", "no", "off", "")
+
+WEEKLY_ENABLED = bool(NOTION_API_KEY and NOTION_TODO_PARENT_ID)
+AUTOCREATE_ENABLED = bool(WEEKLY_ENABLED and WEEKLY_AUTOCREATE)
+
 # Proactive alerts: push the owner when a live channel message contains any of
 # these keywords/phrases. Comma-separated; empty string disables alerting.
 _DEFAULT_ALERT_KEYWORDS = (

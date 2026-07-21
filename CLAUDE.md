@@ -44,6 +44,20 @@ Both tasks share the same `MessageBuffer` instance directly via reference (no qu
 
 **Scheduled digests:** `scheduler.py` runs as a fourth `asyncio.gather()` task and fires jobs at fixed `Asia/Ho_Chi_Minh` times: `hn.py` (Algolia HN API, keyword-filtered security stories) at `HN_DIGEST_TIMES`, and `voz.py` (voz.vn `f/diem-bao.33` subforum RSS — one thread per curated news article) at `PRESS_DIGEST_TIMES`. Digests are Gemini-composed in `analyzer.py` (`hn_digest`, `press_digest`) and pushed to `OWNER_ID` via `bot.send_to_owner`. Links are appended deterministically by code — the LLM references stories by number and never writes URLs. voz.vn sits behind Cloudflare, which fingerprints client TLS stacks — `voz.py` fetches through `curl_cffi` impersonating Chrome (sync, wrapped in `asyncio.to_thread`); cloudscraper was tried first and gets 403 from the VM's datacenter IP. If Cloudflare hardens further, the fetch fails soft (empty digest + logged exception) rather than crashing the bot. /paper additionally crawls the forum's pinned news megathreads (sticky block on the forum page; meta stickies like "Nội quy"/"Report" filtered by an anchored title regex) and appends a Vietnamese `megathread_update` section per thread (max 2) via `bot.build_press_report`.
 
+**Weekly review + auto-create:** `notion.py` is a Notion REST client (httpx, read +
+create) for a personal "Weekly To-do List" page — a page per week under the parent
+`📅 Weekly To-do Lists`, each a 7-column Mon→Sun layout of `to_do` checkboxes. A
+`weekly_review` job in `scheduler.py` (registered in `main.py`, self-guards to Sunday
+via `weekday() == 6`) fires at `WEEKLY_REVIEW_TIME`: it finds the current week's page
+(`find_current_week_page` — parses the date range in each `child_page` title), computes
+a completion scoreboard in code (`analyzer._weekly_scoreboard` — LLMs miscount, so
+Gemini only narrates), and pushes a recap/insights/next-week/one-liner review to the
+owner. Then, isolated from the review, it clones that page into next week's page
+(`create_next_week` — checkboxes reset, date-ranged title, idempotency-guarded). All
+Notion vars are optional (disable-when-empty; `WEEKLY_ENABLED`/`AUTOCREATE_ENABLED`
+gates) so a deployment without them still boots. `/weekly` and `/newweek` run each half
+on demand. Custom Notion emoji (`:programming:`) degrade to plain text in clones.
+
 **Thread comment summary:** `/thread <voz url>` → `voz.fetch_thread` reads the latest ~60 posts (last 3 pages of 20; XenForo thread pages are `.../page-N`) and `analyzer.thread_summary` returns a Vietnamese-only discussion + sentiment briefing. Post extraction uses BeautifulSoup: author from `.message-name .username`, body from `.message-body .bbWrapper` with `<blockquote>` quotes stripped so each poster's own words are summarized. `voz.THREAD_URL_RE` restricts fetching to `voz.vn/t/<slug>.<id>/` URLs — an SSRF guard against pointing the fetcher at arbitrary hosts.
 
 **Proactive keyword alerts:** `alerts.py` (`AlertMatcher`) compiles `ALERT_KEYWORDS` into a word-boundary, case-insensitive regex. The crawler's *live* message handler (never backfill) matches each message and fires `on_alert` in `main.py`, which pushes `🚨 Alert [keywords] in @channel` to the owner via `send_to_owner`. Empty `ALERT_KEYWORDS` disables it.
@@ -77,6 +91,11 @@ All config is read from environment variables (via `.env` + `python-dotenv`):
 | `PRESS_DIGEST_TIMES` | No | `12:30` | Vietnamese press digest push times, Asia/Ho_Chi_Minh (empty disables) |
 | `ALERT_KEYWORDS` | No | conflict/security list | Keywords that trigger a proactive owner alert on live messages (empty disables) |
 | `HEARTBEAT_PATH` | No | `/tmp/heartbeat` | Liveness file path for the watchdog + Docker healthcheck |
+| `NOTION_API_KEY` | No | `""` | Notion internal integration token; empty disables the weekly review |
+| `NOTION_TODO_PARENT_ID` | No | `""` | Parent page holding the weekly to-do pages; empty disables |
+| `WEEKLY_REVIEW_TIME` | No | `19:00` | Sunday review push time, Asia/Ho_Chi_Minh; empty disables the schedule |
+| `WEEKLY_AUTOCREATE` | No | `true` | `false` skips cloning next week's page (review still runs) |
+| `NOTION_TEMPLATE_PAGE_ID` | No | `""` | Optional clone-source override; empty → clone the current-week page |
 
 Copy `.env.example` to `.env` and fill in values before running.
 
@@ -92,6 +111,8 @@ Copy `.env.example` to `.env` and fill in values before running.
 | `/hn` | Current security stories from Hacker News |
 | `/paper` | Điểm báo — press review from voz.vn f/Điểm báo |
 | `/thread <voz url>` | Summarize the recent comments (discussion + sentiment) of a voz thread |
+| `/weekly` | Review this week's Notion to-do list (recap · insights · next week · one-liner) |
+| `/newweek` | Create next week's to-do page by cloning this week's (checkboxes reset) |
 | `/cancel` | Cancel a pending /factcheck or /thread prompt |
 
 ## Key Constraints

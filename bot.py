@@ -1,5 +1,6 @@
 import logging
 from collections.abc import Awaitable, Callable
+from datetime import datetime
 from time import monotonic
 from typing import Any
 
@@ -15,8 +16,10 @@ from aiogram.types import TelegramObject
 import analyzer
 import config
 import hn
+import notion
 import voz
 from buffer import MessageBuffer
+from scheduler import VN_TZ
 
 logger = logging.getLogger(__name__)
 
@@ -34,7 +37,7 @@ class OwnerOnlyMiddleware(BaseMiddleware):
 
 
 # Commands that trigger a paid Gemini API call — these get a cooldown.
-ANALYSIS_COMMANDS = ("/summary", "/threat", "/factcheck", "/hn", "/paper", "/thread")
+ANALYSIS_COMMANDS = ("/summary", "/threat", "/factcheck", "/hn", "/paper", "/thread", "/weekly")
 
 # Bare /factcheck or /thread only starts a prompt — no Gemini call, so no
 # cooldown; charging one would block the user's own answer seconds later.
@@ -116,6 +119,7 @@ QUICK_KEYBOARD = ReplyKeyboardMarkup(
         [KeyboardButton(text="/summary"), KeyboardButton(text="/threat")],
         [KeyboardButton(text="/hn"), KeyboardButton(text="/paper")],
         [KeyboardButton(text="/factcheck"), KeyboardButton(text="/thread")],
+        [KeyboardButton(text="/weekly"), KeyboardButton(text="/newweek")],
         [KeyboardButton(text="/channels")],
     ],
     is_persistent=True,
@@ -129,6 +133,8 @@ BOT_COMMANDS = [
     BotCommand(command="hn", description="HN security stories"),
     BotCommand(command="paper", description="Điểm báo from voz"),
     BotCommand(command="thread", description="Summarize a voz thread"),
+    BotCommand(command="weekly", description="Weekly Notion to-do review"),
+    BotCommand(command="newweek", description="Create next week's to-do page"),
     BotCommand(command="channels", description="Monitored channels"),
     BotCommand(command="cancel", description="Cancel the current prompt"),
 ]
@@ -207,6 +213,8 @@ async def cmd_start(message: TgMessage) -> None:
         "/paper — Điểm báo: press review from voz.vn f/Điểm báo\n"
         "/thread <voz url> — Summarize the recent comments on a voz thread\n"
         "      e.g. `/thread https://voz.vn/t/abc.123456/`\n"
+        "/weekly — Review this week's Notion to-do list\n"
+        "/newweek — Create next week's to-do page from this week's\n"
         "/channels — Monitored channels and message counts\n"
         "/cancel — Cancel the current prompt\n\n"
         "Scheduled pushes: HN security digest 08:30 & 20:00, điểm báo 07:00 (VN time).\n"
@@ -236,6 +244,49 @@ async def cmd_channels(message: TgMessage) -> None:
     await message.answer(
         f"📡 *Monitored channels* — {_buffer.total_size()} messages buffered:\n" + "\n".join(lines),
         parse_mode=ParseMode.MARKDOWN,
+    )
+
+
+@router.message(Command("weekly"))
+async def cmd_weekly(message: TgMessage) -> None:
+    if not config.WEEKLY_ENABLED:
+        await message.answer("Weekly review isn't configured.")
+        return
+    today = datetime.now(VN_TZ).date()
+    await message.answer("📝 Building your weekly review… (~15s)")
+    page = await notion.find_current_week_page(today)
+    if page is None:
+        await message.answer("Couldn't find this week's Notion page.")
+        return
+    try:
+        week = await notion.fetch_week(page.id)
+    except Exception:
+        logger.exception("weekly: fetch_week failed")
+        await message.answer(analyzer.ANALYSIS_FAILED_REPLY)
+        return
+    result = await analyzer.weekly_review(week)
+    await _reply_analysis(message, result)
+
+
+@router.message(Command("newweek"))
+async def cmd_newweek(message: TgMessage) -> None:
+    if not config.AUTOCREATE_ENABLED:
+        await message.answer("Auto-create is off.")
+        return
+    today = datetime.now(VN_TZ).date()
+    page = await notion.find_current_week_page(today)
+    if page is None:
+        await message.answer("Couldn't find this week's page to clone.")
+        return
+    await message.answer("🆕 Creating next week's page…")
+    try:
+        new_id = await notion.create_next_week(today, source_page_id=page.id)
+    except Exception:
+        logger.exception("newweek: create_next_week failed")
+        await message.answer("Couldn't create next week's page.")
+        return
+    await message.answer(
+        "Done — next week's page is ready." if new_id else "Next week's page already exists."
     )
 
 
