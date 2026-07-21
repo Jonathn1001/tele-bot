@@ -50,36 +50,58 @@ Four touch points. New file `notion.py`; edits to `analyzer.py`, `main.py`,
 ### 1. `notion.py` — new source module
 
 Thin async Notion REST client (new dep `httpx`; `curl_cffi.requests.AsyncSession`
-is the zero-new-dep fallback). Auth header `Authorization: Bearer <NOTION_API_KEY>`,
-`Notion-Version: 2022-06-28`. Two responsibilities:
+is the zero-new-dep fallback). One `httpx.AsyncClient` per call via
+`async with` (created/closed per invocation — no long-lived global). Headers:
+`Authorization: Bearer <NOTION_API_KEY>`, `Notion-Version: 2022-06-28` (older but
+stable; blocks + children endpoints are unchanged in it). **Network I/O and pure
+parsing are split** so parsing is fixture-testable without the network — the house
+convention (`paper-pinned-threads-design.md`: pure `parse_pinned_threads(html_text)`).
 
-**A. Find the current week's page** — `find_current_week_page(today) -> Page | None`
-1. `GET /v1/blocks/{NOTION_TODO_PARENT_ID}/children` (paginated) → keep `child_page`
-   blocks. The block's title text holds `Weekly To-do List (<range>)`.
-2. Parse the date range from each title. Pick the page whose range **contains
-   `today`**. Titles without a parseable current range (e.g. the template) are
-   skipped. If none contains today, fall back to the most-recently-created match
-   and log a warning.
+**Dataclasses:**
+```python
+@dataclass
+class WeekPage: id: str; title: str          # a candidate week page
+@dataclass
+class Task:     text: str; checked: bool
+@dataclass
+class Day:      name: str; tasks: list[Task]
+@dataclass
+class Week:     label: str; days: list[Day]; goals: list[str]
+```
 
-**B. Read the tasks** — `fetch_week(page_id) -> Week`
-- Recursively fetch block children (`GET /v1/blocks/{id}/children`, follow
-  `has_children`, handle `next_cursor` pagination) to reach the nested
-  `column_list → column → to_do` tree.
-- Build `Week`:
-  ```python
-  @dataclass
-  class Task:  text: str; checked: bool
-  @dataclass
-  class Day:   name: str; tasks: list[Task]
-  @dataclass
-  class Week:  label: str; days: list[Day]; goals: list[str]
-  ```
-  `label` = page title; `goals` = the header habit-goal bullet texts (plain text,
-  colors dropped).
+**A. Find the current week's page** — `find_current_week_page(today: date) -> WeekPage | None`
+1. `GET /v1/blocks/{NOTION_TODO_PARENT_ID}/children` (paginated via `next_cursor`)
+   → keep `child_page` blocks; each carries `id` + `child_page.title`.
+2. `parse_title_range(title) -> tuple[date, date] | None` (pure) selects candidates:
+   - Regex on the range in the title, tolerant of the emoji prefix and extra
+     whitespace: `r"\(\s*([A-Za-z]{3,9})\s+(\d{1,2})\s*[-–]\s*([A-Za-z]{3,9})\s+(\d{1,2})\s*\)"`.
+   - No year in titles → assume `today.year`. Cross-month handled by parsing each
+     month name independently (`July 27 - Aug 2`). **Cross-year:** if computed
+     `end < start`, roll `end` to `start.year + 1` (`Dec 29 - Jan 4`).
+   - Unparseable (e.g. the template, whose title has no valid range) → `None`, skipped.
+3. Pick the candidate whose `[start, end]` **contains `today`**. Fallback when none
+   contains today: sort remaining candidates by the block's `created_time`
+   (children come in document order, not creation order) and take the newest,
+   logging a warning. If there are no candidates at all → `None`.
 
-**Failure policy:** any network / parse error → return `None` (find) or raise, caught
-by the caller which sends a soft "couldn't read this week's page" notice. Never
-crashes the bot — same contract as `voz.py` / `hn.py`.
+**B. Read the tasks** — `fetch_week(page_id) -> Week` (network) + `parse_week(blocks) -> Week` (pure)
+- `fetch_week` recursively fetches block children (`GET /v1/blocks/{id}/children`,
+  follow `has_children`, page `next_cursor`) to materialize the nested
+  `column_list → column → to_do` tree, then hands the tree to `parse_week`.
+- `parse_week` walks it: each `column` → a `Day` (name from the column's leading
+  `heading`), its `to_do` blocks → `Task(text, checked)`. `goals` = the header
+  habit-goal bullet texts.
+- **Text extraction:** join `rich_text[].plain_text` for each block. Notion **custom
+  emoji** (e.g. `:programming:`) do **not** appear in `plain_text`; such items still
+  parse (bare text) and fall into the "Other" category bucket (see §2). Standard
+  unicode emoji (`🏃`, `🔥`, …) are in `plain_text` and drive grouping.
+- `goals` are **context only** — their color-encoded status (green/red) is dropped
+  and is **not** counted in the scoreboard (the scoreboard counts only the 7-day
+  `to_do` checkboxes).
+
+**Failure policy:** any network / parse error → `find_current_week_page` returns
+`None`; `fetch_week` raises, caught by the caller, which sends a soft "couldn't read
+this week's page" notice. Never crashes the bot — same contract as `voz.py` / `hn.py`.
 
 **SSRF / scope:** the client only ever calls `api.notion.com`; page IDs come from the
 configured parent's own children, never from untrusted input.
@@ -90,9 +112,17 @@ configured parent's own children, never from untrusted input.
 Python; Gemini only narrates.
 
 - `overall`: total `checked` / total tasks across all days.
-- `per_category`: tasks grouped by a normalized label (leading emoji + first word,
-  e.g. `🏃 Running`, `🔥 Gym`, `📗 Reading`, `💻 Working`, `🇬🇧 English`, `🥊 Muay`) →
-  `done/total` each.
+- `per_category`: tasks grouped by their **leading unicode emoji only** (not
+  emoji + first word — that would split `🔥 Chest`, `🔥 Back`, `🔥 Leg` into three
+  instead of one `🔥` gym bucket). An explicit emoji→label map names them for the
+  output; unmapped-emoji or no-emoji items (incl. custom-emoji like `:programming:`)
+  fall into an **`Other`** bucket:
+  ```python
+  CATEGORY = {"🏃": "Running", "🔥": "Gym", "🥊": "Muay",
+              "📗": "Reading", "🇬🇧": "English", "🙏": "Buddhist", "☕": "Coffee",
+              "📝": "Review"}   # extend as the template evolves; unknown → "Other"
+  ```
+  → `done/total` per category.
 - `per_day`: `checked/total` per weekday.
 
 Build a numbered plain-text scoreboard string, then call the existing `_ask()` with:
@@ -130,11 +160,15 @@ async def weekly_review_job() -> None:
     await send_to_owner(bot, f"📝 Weekly Review — {week.label}\n\n{text}")
 ```
 
-Registered in `main.py`'s `jobs` list:
+Registered in `main.py`'s `jobs` list, gated on `WEEKLY_ENABLED`:
 ```python
-*((t, "weekly_review", weekly_review_job) for t in parse_times(config.WEEKLY_REVIEW_TIME)),
+*(
+    (t, "weekly_review", weekly_review_job)
+    for t in (parse_times(config.WEEKLY_REVIEW_TIME) if config.WEEKLY_ENABLED else [])
+),
 ```
-`WEEKLY_REVIEW_TIME` defaults to `19:00`; empty string disables (via `parse_times`).
+Empty `WEEKLY_REVIEW_TIME` also disables the schedule (via `parse_times`) even when
+credentials are set.
 
 > Alternative considered — extend `Job` with a weekday field. Rejected: touches the
 > scheduler core and all existing jobs for a single caller. The self-guard is local.
@@ -144,7 +178,8 @@ Registered in `main.py`'s `jobs` list:
 On-demand trigger so the flow is testable without waiting for Sunday. The command
 runs the fetch + analyze inline (no weekday guard) and replies in-chat via
 `_reply_analysis`. Touch points:
-- New `@router.message(Command("weekly"))` handler.
+- New `@router.message(Command("weekly"))` handler. If `not config.WEEKLY_ENABLED`,
+  reply "Weekly review isn't configured." and return.
 - Add `/weekly` to `ANALYSIS_COMMANDS` (it makes a paid Gemini call → rate-limited).
 - Add to `BOT_COMMANDS`, `QUICK_KEYBOARD`, and the `/start` help text.
 
@@ -152,9 +187,21 @@ runs the fetch + analyze inline (no weekday guard) and replies in-chat via
 
 | Var | Required | Default | Description |
 |---|---|---|---|
-| `NOTION_API_KEY` | Yes | — | Notion internal integration token (secret) |
-| `NOTION_TODO_PARENT_ID` | Yes | — | Parent page ID whose child pages are the weekly to-do lists |
-| `WEEKLY_REVIEW_TIME` | No | `19:00` | Sunday push time, `Asia/Ho_Chi_Minh`; empty disables |
+| `NOTION_API_KEY` | No | `""` | Notion internal integration token (secret); empty disables the weekly feature |
+| `NOTION_TODO_PARENT_ID` | No | `""` | Parent page ID whose child pages are the weekly to-do lists; empty disables |
+| `WEEKLY_REVIEW_TIME` | No | `19:00` | Sunday push time, `Asia/Ho_Chi_Minh`; empty disables the schedule |
+
+**Optional, not required — disable-when-empty.** Read via `os.environ.get(..., "")`,
+not `os.environ["..."]`. This matches the codebase's optional-feature pattern
+(`CHANNELS`, `ALERT_KEYWORDS`, `HN_DIGEST_TIMES` in `config.py`) and is deliberately
+**unlike** the required `OWNER_ID`/`DATABASE_URL`: the weekly review is one add-on,
+so a deployed bot missing these must keep booting (HN, press, alerts unaffected). A
+single derived flag gates both entry points:
+```python
+WEEKLY_ENABLED = bool(NOTION_API_KEY and NOTION_TODO_PARENT_ID)
+```
+- `WEEKLY_ENABLED` false → the scheduled job is **not registered** and `/weekly`
+  replies "Weekly review isn't configured." (logged once at startup).
 
 Added to `config.py`, `.env.example`, and the CLAUDE.md config table + a "Weekly
 review" architecture paragraph.
@@ -170,16 +217,35 @@ review" architecture paragraph.
 
 ## Testing
 
-`tests/test_notion.py`:
-- Title date-range parser: picks the page containing `today`; skips the template;
-  falls back to newest with a warning when none match.
-- Block walker: `column_list → column → to_do` yields correct `Day`/`Task` with
-  `checked` states; nested pagination followed.
-- Soft-fail: network error → `None` / caught, no crash.
+`tests/test_notion.py` (pure functions, fixtures — no network):
+- `parse_title_range`: in-range title selected; emoji prefix + double space tolerated;
+  cross-month (`July 27 - Aug 2`); cross-year roll (`Dec 29 - Jan 4` → end in next
+  year); template/no-range title → `None` (skipped).
+- `find_current_week_page` selection: candidate containing `today` wins; when none
+  contains today, newest by `created_time` is chosen (document-order fixture proves
+  it's not just "last in list").
+- `parse_week`: `column_list → column → to_do` fixture yields correct `Day`/`Task`
+  with `checked` states; custom-emoji item (`:programming:`) parses as bare text;
+  goals extracted from the header.
+- Soft-fail: network error → `find_current_week_page` returns `None`; `fetch_week`
+  raises and the caller catches — no crash. Pagination (`next_cursor`) followed.
 
 `tests/test_analyzer.py`:
 - `weekly_review` scoreboard math: overall and per-category `done/total` correct for a
-  fixed `Week` fixture; empty week returns the fixed reply. Gemini call mocked.
+  fixed `Week` fixture — including that `🔥 Chest`/`🔥 Back`/`🔥 Leg` collapse into a
+  single `Gym` bucket and no-emoji items land in `Other`. Empty week returns the fixed
+  reply. Gemini call mocked.
+
+## Open questions
+
+- **Parent is a page, not a database.** Design assumes `NOTION_TODO_PARENT_ID` is a
+  page whose children are `child_page` blocks. Could not verify programmatically (the
+  July 20-26 page returned an empty `ancestor-path`). To confirm at setup: the parent's
+  URL should be a normal page, and `GET /v1/blocks/{id}/children` should return the
+  weekly pages as `child_page` blocks. If it turns out to be a **database**, discovery
+  changes to a data-source query — a localized change to `find_current_week_page` only.
+- **Sunday 19:00 undercounts Sunday itself** (its tasks likely still unchecked at 7pm).
+  Accepted per the chosen schedule; revisit to 22:00 if the recap reads too harsh.
 
 ## Out of scope (YAGNI)
 
