@@ -347,8 +347,9 @@ move of the July 20-26 page under it are **already done**. Remaining, one-time:
 ## Out of scope (YAGNI)
 
 - Reading the `📅 Weekly Progress Tracker` DSA database.
-- Writing the *review text* back into Notion (the bot creates next week's page but
-  does not annotate the reviewed week).
+- ~~Writing the *review text* back into Notion (the bot creates next week's page but
+  does not annotate the reviewed week).~~ **Superseded** — now in scope, see
+  [`2026-07-22-weekly-review-writeback-design.md`](2026-07-22-weekly-review-writeback-design.md).
 - Multi-week trends / history storage.
 - Cloning arbitrary >2-level page layouts beyond the documented append fallback.
 - The trailing "2026 Core Targets" long-term list (carried by the clone as-is, not

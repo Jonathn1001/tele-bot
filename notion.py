@@ -32,6 +32,11 @@ CREATABLE_TYPES = frozenset(
     }
 )
 
+# Heading prefix written above a review; also the idempotency marker (a page
+# already carrying a heading_2 starting with this string is not written again).
+REVIEW_MARKER = "📝 Weekly Review"
+_MAX_PARAGRAPH_CHARS = 1900  # under Notion's 2000-char rich_text content cap
+
 _MONTH_NAMES = [
     "January", "February", "March", "April", "May", "June",
     "July", "August", "September", "October", "November", "December",
@@ -272,6 +277,50 @@ def to_create_blocks(blocks: list[dict], depth: int = 0) -> list[dict]:
     return out
 
 
+def _text_block(block_type: str, content: str) -> dict:
+    """A create-shaped block carrying a single plain-text rich_text run."""
+    return {
+        "object": "block",
+        "type": block_type,
+        block_type: {"rich_text": [{"type": "text", "text": {"content": content}}]},
+    }
+
+
+def _split_paragraphs(text: str) -> list[str]:
+    """One paragraph per non-empty line, each hard-chunked to Notion's char cap.
+    Splitting per line (not per blank-line block) keeps the review readable even
+    when the model emits no blank separators between its labeled sections."""
+    out: list[str] = []
+    for raw in text.split("\n"):
+        line = raw.strip()
+        if not line:
+            continue
+        for i in range(0, len(line), _MAX_PARAGRAPH_CHARS):
+            out.append(line[i:i + _MAX_PARAGRAPH_CHARS])
+    return out
+
+
+def build_review_blocks(label: str, review_text: str) -> list[dict]:
+    """Blocks appended onto a reviewed week's page: a divider, the marker heading,
+    then the review text as paragraphs. The heading is built from REVIEW_MARKER so
+    the visible header and the idempotency marker can never drift apart."""
+    blocks: list[dict] = [
+        {"object": "block", "type": "divider", "divider": {}},
+        _text_block("heading_2", f"{REVIEW_MARKER} — {label}"),
+    ]
+    blocks.extend(_text_block("paragraph", p) for p in _split_paragraphs(review_text))
+    return blocks
+
+
+def _has_review_marker(children: list[dict]) -> bool:
+    """True when a review has already been written back — a heading_2 whose text
+    starts with REVIEW_MARKER (label-independent, so it matches on any week)."""
+    for b in children:
+        if b.get("type") == "heading_2" and _block_text(b).startswith(REVIEW_MARKER):
+            return True
+    return False
+
+
 def _title_prefix(title: str) -> str:
     """Everything before the last '(' in a week title, preserving spacing."""
     idx = title.rfind("(")
@@ -391,3 +440,22 @@ async def create_next_week(today: date, source_page_id: str) -> str | None:
         new_id = r.json().get("id")
     logger.info("Notion: created next week's page %s (%s)", new_id, title)
     return new_id
+
+
+async def _append_children(client: httpx.AsyncClient, block_id: str, blocks: list[dict]) -> None:
+    r = await client.patch(f"/blocks/{block_id}/children", json={"children": blocks})
+    r.raise_for_status()
+
+
+async def append_review(page_id: str, label: str, review_text: str) -> bool:
+    """Append the weekly review onto its week page, once. Returns True when written,
+    False when a review is already present (skip-once). Raises on network error —
+    the caller catches; the review is already delivered to Telegram regardless."""
+    async with _client() as client:
+        children = await _get_children(client, page_id)
+        if _has_review_marker(children):
+            logger.info("Notion: review already on %s; skipping write-back", page_id)
+            return False
+        await _append_children(client, page_id, build_review_blocks(label, review_text))
+    logger.info("Notion: wrote weekly review back to %s", page_id)
+    return True

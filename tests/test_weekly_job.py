@@ -91,3 +91,69 @@ async def test_create_failure_does_not_lose_review(monkeypatch):
     texts = _owner_texts(sent)
     assert "Weekly Review" in texts                   # review still delivered
     assert "Couldn't create" in texts                 # create failure reported, not swallowed
+
+
+# --------------------------------------------------------------------------- #
+# Write-back to Notion (Sunday-job only, skip-once, isolated)
+# --------------------------------------------------------------------------- #
+
+def _wire_review(monkeypatch, review_text="Recap: good."):
+    """Common happy-path stubs; returns the page used so callers can assert ids."""
+    page = notion.WeekPage(id="p1", title="Weekly To-do List  (July 20 - July 26)")
+    week = notion.Week(label="Weekly To-do List  (July 20 - July 26)", days=[], goals=[])
+    monkeypatch.setattr(main, "send_to_owner", AsyncMock())
+    monkeypatch.setattr(notion, "find_current_week_page", AsyncMock(return_value=page))
+    monkeypatch.setattr(notion, "fetch_week", AsyncMock(return_value=week))
+    monkeypatch.setattr(analyzer, "weekly_review", AsyncMock(return_value=review_text))
+    monkeypatch.setattr(notion, "create_next_week", AsyncMock(return_value="new-id"))
+    return page, week
+
+
+async def test_writeback_called_on_successful_review(monkeypatch):
+    page, week = _wire_review(monkeypatch)
+    append = AsyncMock(return_value=True)
+    monkeypatch.setattr(notion, "append_review", append)
+    monkeypatch.setattr(config, "WRITEBACK_ENABLED", True)
+    monkeypatch.setattr(config, "AUTOCREATE_ENABLED", True)
+
+    await main.run_weekly_review(AsyncMock(), now=SUNDAY)
+
+    append.assert_awaited_once_with(page.id, week.label, "Recap: good.")
+
+
+async def test_writeback_failure_keeps_review_and_clone(monkeypatch):
+    page, _ = _wire_review(monkeypatch)
+    create = notion.create_next_week  # AsyncMock from _wire_review
+    monkeypatch.setattr(notion, "append_review", AsyncMock(side_effect=RuntimeError("boom")))
+    monkeypatch.setattr(config, "WRITEBACK_ENABLED", True)
+    monkeypatch.setattr(config, "AUTOCREATE_ENABLED", True)
+
+    await main.run_weekly_review(AsyncMock(), now=SUNDAY)  # must not raise
+
+    texts = _owner_texts(main.send_to_owner)
+    assert "Weekly Review" in texts and "Recap: good." in texts  # review delivered
+    create.assert_awaited_once()                                 # clone still ran
+
+
+async def test_writeback_skipped_when_disabled(monkeypatch):
+    _wire_review(monkeypatch)
+    append = AsyncMock()
+    monkeypatch.setattr(notion, "append_review", append)
+    monkeypatch.setattr(config, "WRITEBACK_ENABLED", False)
+    monkeypatch.setattr(config, "AUTOCREATE_ENABLED", False)
+
+    await main.run_weekly_review(AsyncMock(), now=SUNDAY)
+
+    append.assert_not_awaited()
+
+
+async def test_writeback_skipped_for_placeholder_text(monkeypatch):
+    _wire_review(monkeypatch, review_text=analyzer.NO_TASKS_REPLY)
+    append = AsyncMock()
+    monkeypatch.setattr(notion, "append_review", append)
+    monkeypatch.setattr(config, "WRITEBACK_ENABLED", True)
+    monkeypatch.setattr(config, "AUTOCREATE_ENABLED", False)
+
+    await main.run_weekly_review(AsyncMock(), now=SUNDAY)
+
+    append.assert_not_awaited()                                  # don't persist the placeholder

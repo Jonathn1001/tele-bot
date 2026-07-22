@@ -57,6 +57,14 @@ owner. Then, isolated from the review, it clones that page into next week's page
 Notion vars are optional (disable-when-empty; `WEEKLY_ENABLED`/`AUTOCREATE_ENABLED`
 gates) so a deployment without them still boots. `/weekly` and `/newweek` run each half
 on demand. Custom Notion emoji (`:programming:`) degrade to plain text in clones.
+After the Sunday review, the same job also **writes the review back onto that week's
+Notion page** (`notion.append_review` → `PATCH /blocks/{id}/children`: a divider, a
+`heading_2` marker `📝 Weekly Review — <label>`, then the text as paragraphs). It is
+**skip-once** (a page already carrying the `REVIEW_MARKER` heading is not rewritten),
+Sunday-job-only (`/weekly` stays a read-only preview), and isolated — a write-back
+failure is logged, never surfaced to the owner (the review is already in Telegram) and
+never blocks the clone. Gated by `WEEKLY_WRITEBACK` (`WRITEBACK_ENABLED`); placeholder
+outputs (`NO_TASKS_REPLY`, `ANALYSIS_FAILED_REPLY`) are not persisted.
 
 **Thread comment summary:** `/thread <voz url>` → `voz.fetch_thread` reads the latest ~60 posts (last 3 pages of 20; XenForo thread pages are `.../page-N`) and `analyzer.thread_summary` returns a Vietnamese-only discussion + sentiment briefing. Post extraction uses BeautifulSoup: author from `.message-name .username`, body from `.message-body .bbWrapper` with `<blockquote>` quotes stripped so each poster's own words are summarized. `voz.THREAD_URL_RE` restricts fetching to `voz.vn/t/<slug>.<id>/` URLs — an SSRF guard against pointing the fetcher at arbitrary hosts.
 
@@ -95,6 +103,7 @@ All config is read from environment variables (via `.env` + `python-dotenv`):
 | `NOTION_TODO_PARENT_ID` | No | `""` | Parent page holding the weekly to-do pages; empty disables |
 | `WEEKLY_REVIEW_TIME` | No | `19:00` | Sunday review push time, Asia/Ho_Chi_Minh; empty disables the schedule |
 | `WEEKLY_AUTOCREATE` | No | `true` | `false` skips cloning next week's page (review still runs) |
+| `WEEKLY_WRITEBACK` | No | `true` | `false` skips writing the Sunday review back onto its Notion week page (Telegram push still runs) |
 | `NOTION_TEMPLATE_PAGE_ID` | No | `""` | Optional clone-source override; empty → clone the current-week page |
 
 Copy `.env.example` to `.env` and fill in values before running.

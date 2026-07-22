@@ -42,6 +42,17 @@ async def run_weekly_review(bot: Bot, now: datetime | None = None) -> None:
         except Exception:
             logger.exception("weekly: review failed")
             await send_to_owner(bot, "📝 Weekly review failed — couldn't read this week's page.")
+        else:
+            # Persist the review onto its own week page (Sunday only, skip-once).
+            # Isolated from the clone below and from the already-delivered Telegram
+            # push — a write-back miss is logged, never surfaced to the owner.
+            if config.WRITEBACK_ENABLED and text not in (
+                analyzer.NO_TASKS_REPLY, analyzer.ANALYSIS_FAILED_REPLY
+            ):
+                try:
+                    await notion.append_review(page.id, week.label, text)
+                except Exception:
+                    logger.exception("weekly: append_review failed")
     # Clone runs regardless of the review outcome; it only needs the located page.
     if config.AUTOCREATE_ENABLED and page is not None:
         try:

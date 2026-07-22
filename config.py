@@ -34,9 +34,12 @@ NOTION_TEMPLATE_PAGE_ID = os.environ.get("NOTION_TEMPLATE_PAGE_ID", "")  # optio
 WEEKLY_REVIEW_TIME = os.environ.get("WEEKLY_REVIEW_TIME", "19:00")  # Sunday push time, Asia/Ho_Chi_Minh; empty disables schedule
 _WEEKLY_AUTOCREATE_RAW = os.environ.get("WEEKLY_AUTOCREATE", "true").strip().lower()
 WEEKLY_AUTOCREATE = _WEEKLY_AUTOCREATE_RAW not in ("0", "false", "no", "off", "")
+_WEEKLY_WRITEBACK_RAW = os.environ.get("WEEKLY_WRITEBACK", "true").strip().lower()
+WEEKLY_WRITEBACK = _WEEKLY_WRITEBACK_RAW not in ("0", "false", "no", "off", "")  # false → Telegram-only
 
 WEEKLY_ENABLED = bool(NOTION_API_KEY and NOTION_TODO_PARENT_ID)
 AUTOCREATE_ENABLED = bool(WEEKLY_ENABLED and WEEKLY_AUTOCREATE)
+WRITEBACK_ENABLED = bool(WEEKLY_ENABLED and WEEKLY_WRITEBACK)  # append the review onto its week page
 
 # Proactive alerts: push the owner when a live channel message contains any of
 # these keywords/phrases. Comma-separated; empty string disables alerting.

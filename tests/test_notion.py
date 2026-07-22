@@ -326,3 +326,125 @@ def _assert_reset_clone(payload: dict) -> None:
     assert title == "Weekly To-do List  (July 27 - August 2)"
     assert payload["icon"]["type"] == "emoji"
     assert payload["children"][0]["to_do"]["checked"] is False  # reset on clone
+
+
+# --------------------------------------------------------------------------- #
+# build_review_blocks (pure)
+# --------------------------------------------------------------------------- #
+
+def _para_texts(blocks: list[dict]) -> list[str]:
+    return [b["paragraph"]["rich_text"][0]["text"]["content"]
+            for b in blocks if b["type"] == "paragraph"]
+
+
+def test_build_review_blocks_divider_heading_paragraphs():
+    label = "Weekly To-do List  (July 20 - July 26)"
+    text = "Recap: 12/20 done.\nInsights: gym strong.\n\nNext Week: read more.\nOne-liner: go."
+    blocks = notion.build_review_blocks(label, text)
+
+    assert all(b["object"] == "block" for b in blocks)          # full create shape
+    assert blocks[0]["type"] == "divider"
+    assert blocks[1]["type"] == "heading_2"
+    heading = blocks[1]["heading_2"]["rich_text"][0]["text"]["content"]
+    assert heading == f"{notion.REVIEW_MARKER} — {label}"       # built from the constant
+    # one paragraph per non-empty line; the blank line is dropped
+    assert _para_texts(blocks) == [
+        "Recap: 12/20 done.", "Insights: gym strong.",
+        "Next Week: read more.", "One-liner: go.",
+    ]
+
+
+def test_build_review_blocks_hard_chunks_long_line():
+    long = "x" * 4000  # > 1900-char Notion rich_text cap → must split
+    blocks = notion.build_review_blocks("L", long)
+    paras = _para_texts(blocks)
+    assert len(paras) == 3                                       # ceil(4000 / 1900)
+    assert all(len(p) <= 1900 for p in paras)
+    assert "".join(paras) == long                               # no data lost
+
+
+def test_build_review_blocks_empty_text_has_no_paragraphs():
+    blocks = notion.build_review_blocks("L", "\n  \n")
+    assert [b["type"] for b in blocks] == ["divider", "heading_2"]
+
+
+# --------------------------------------------------------------------------- #
+# _has_review_marker (pure)
+# --------------------------------------------------------------------------- #
+
+def test_has_review_marker_true_for_matching_heading_2():
+    children = [_heading(f"{notion.REVIEW_MARKER} — Weekly (July 20 - July 26)")]
+    assert notion._has_review_marker(children) is True
+
+
+def test_has_review_marker_ignores_other_block_types():
+    marker_text = f"{notion.REVIEW_MARKER} — X"
+    h1 = {"type": "heading_1", "heading_1": {"rich_text": _rt(marker_text)}}
+    para = {"type": "paragraph", "paragraph": {"rich_text": _rt(marker_text)}}
+    assert notion._has_review_marker([h1, para]) is False       # only heading_2 counts
+
+
+def test_has_review_marker_false_when_absent():
+    assert notion._has_review_marker([_heading("Monday"), _todo("Task", False)]) is False
+
+
+# --------------------------------------------------------------------------- #
+# append_review — network mocked
+# --------------------------------------------------------------------------- #
+
+class _FakeAppendClient:
+    """Async-context httpx stand-in for append_review: serves the page's direct
+    children (marker scan) and captures the PATCH payload."""
+
+    def __init__(self, children, page_id="pg", get_error=None):
+        self.children = children
+        self.page_id = page_id
+        self.get_error = get_error
+        self.patch_url: str | None = None
+        self.patch_payload: dict | None = None
+
+    async def __aenter__(self):
+        return self
+
+    async def __aexit__(self, *a):
+        return False
+
+    async def get(self, url, params=None):
+        if self.get_error is not None:
+            raise self.get_error
+        if url == f"/blocks/{self.page_id}/children":
+            return _FakeResp({"results": self.children, "has_more": False})
+        raise AssertionError(f"unexpected GET {url}")
+
+    async def patch(self, url, json=None):
+        self.patch_url = url
+        self.patch_payload = json
+        return _FakeResp({})
+
+
+async def test_append_review_writes_when_no_marker(monkeypatch):
+    fake = _FakeAppendClient(children=[_heading("Monday")])
+    monkeypatch.setattr(notion, "_client", lambda: fake)
+    result = await notion.append_review("pg", "My Week", "Recap: ok.")
+    assert result is True
+    assert fake.patch_url == "/blocks/pg/children"
+    assert fake.patch_payload["children"] == notion.build_review_blocks("My Week", "Recap: ok.")
+
+
+async def test_append_review_skips_when_marker_present(monkeypatch):
+    fake = _FakeAppendClient(children=[_heading(f"{notion.REVIEW_MARKER} — My Week")])
+    monkeypatch.setattr(notion, "_client", lambda: fake)
+    result = await notion.append_review("pg", "My Week", "Recap: ok.")
+    assert result is False
+    assert fake.patch_payload is None                           # no write issued
+
+
+async def test_append_review_propagates_network_error(monkeypatch):
+    fake = _FakeAppendClient(children=[], get_error=RuntimeError("boom"))
+    monkeypatch.setattr(notion, "_client", lambda: fake)
+    try:
+        await notion.append_review("pg", "My Week", "Recap: ok.")
+    except RuntimeError:
+        pass
+    else:
+        raise AssertionError("expected RuntimeError to propagate to the caller")
