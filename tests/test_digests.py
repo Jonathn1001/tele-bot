@@ -17,7 +17,7 @@ import analyzer
 import bot
 import hn
 import voz
-from scheduler import VN_TZ, next_run, parse_times
+from scheduler import VN_TZ, next_run, next_wave, parse_times
 
 
 # ---------------------------------------------------------------------------
@@ -52,6 +52,31 @@ def test_next_run_exact_minute_rolls_forward():
     # so a just-fired job can't retrigger the same minute.
     now = datetime(2026, 7, 9, 8, 30, 0, tzinfo=VN_TZ)
     assert next_run(now, time(8, 30)).day == 10
+
+
+async def _noop() -> None:  # placeholder job; next_wave never calls it
+    return None
+
+
+def test_next_wave_batches_jobs_sharing_a_fire_time():
+    # Two jobs at 12:30 must BOTH be returned in one wave, not just the first.
+    jobs = [
+        (time(12, 30), "hn", _noop),
+        (time(12, 30), "press", _noop),
+        (time(18, 30), "weekly", _noop),
+    ]
+    now = datetime(2026, 7, 22, 6, 0, tzinfo=VN_TZ)
+    when, due = next_wave(now, jobs)
+    assert when == datetime(2026, 7, 22, 12, 30, tzinfo=VN_TZ)
+    assert [name for name, _ in due] == ["hn", "press"]
+
+
+def test_next_wave_picks_only_the_earliest_time():
+    jobs = [(time(18, 30), "press", _noop), (time(12, 30), "hn", _noop)]
+    now = datetime(2026, 7, 22, 6, 0, tzinfo=VN_TZ)
+    when, due = next_wave(now, jobs)
+    assert when == datetime(2026, 7, 22, 12, 30, tzinfo=VN_TZ)
+    assert [name for name, _ in due] == ["hn"]
 
 
 # ---------------------------------------------------------------------------

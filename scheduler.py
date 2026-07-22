@@ -31,21 +31,35 @@ def next_run(now: datetime, fire: time) -> datetime:
     return candidate
 
 
+def next_wave(
+    now: datetime, jobs: list[Job]
+) -> tuple[datetime, list[tuple[str, Callable[[], Awaitable[None]]]]]:
+    """Earliest upcoming fire time and *every* job that fires at it.
+
+    Jobs sharing a fire time are batched into one wave so none is starved —
+    the old min()-picks-one logic silently dropped every tie-loser each day.
+    """
+    scheduled = [(next_run(now, t), name, fn) for t, name, fn in jobs]
+    when = min(w for w, _, _ in scheduled)
+    due = [(name, fn) for w, name, fn in scheduled if w == when]
+    return when, due
+
+
 async def run_scheduler(jobs: list[Job]) -> None:
-    """Sleep until the nearest job's fire time, run it, repeat. Job crashes are logged, never fatal."""
+    """Sleep until the nearest fire time, run every job due then, repeat. Job crashes are logged, never fatal."""
     if not jobs:
         return
     while True:
         now = datetime.now(VN_TZ)
-        when, name, fn = min(
-            ((next_run(now, t), name, fn) for t, name, fn in jobs),
-            key=lambda x: x[0],
-        )
+        when, due = next_wave(now, jobs)
         delay = (when - now).total_seconds()
-        logger.info("Scheduler: next job %r at %s (in %.0f min)", name, when.isoformat(), delay / 60)
+        logger.info(
+            "Scheduler: %d job(s) at %s (in %.0f min)", len(due), when.isoformat(), delay / 60
+        )
         await asyncio.sleep(delay)
-        try:
-            await fn()
-            logger.info("Scheduler: job %r done", name)
-        except Exception:
-            logger.exception("Scheduler: job %r failed", name)
+        for name, fn in due:
+            try:
+                await fn()
+                logger.info("Scheduler: job %r done", name)
+            except Exception:
+                logger.exception("Scheduler: job %r failed", name)
