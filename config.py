@@ -23,7 +23,7 @@ PRUNE_INTERVAL_HOURS = max(1, int(os.environ.get("PRUNE_INTERVAL_HOURS", "24")))
 
 # Scheduled digest fire times, Asia/Ho_Chi_Minh ("HH:MM[,HH:MM...]"). Empty string disables.
 HN_DIGEST_TIMES = os.environ.get("HN_DIGEST_TIMES", "12:30")
-PRESS_DIGEST_TIMES = os.environ.get("PRESS_DIGEST_TIMES", "12:30")
+PRESS_DIGEST_TIMES = os.environ.get("PRESS_DIGEST_TIMES", "18:30")
 
 # --- Weekly review (Notion → Gemini → Telegram) ---
 # All optional: disable-when-empty, so a deployment without Notion still boots
