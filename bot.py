@@ -193,10 +193,15 @@ async def _reply_analysis(message: TgMessage, result: str) -> None:
         await message.answer(chunk, parse_mode=None)
 
 
+async def send_to_chat(bot: Bot, chat_id: int, text: str) -> None:
+    """Push text to any chat (owner DM, group, supergroup), chunked to Telegram's limit."""
+    for chunk in _split(text):
+        await bot.send_message(chat_id, chunk, parse_mode=None)
+
+
 async def send_to_owner(bot: Bot, text: str) -> None:
     """Push a scheduled digest to the owner, chunked to Telegram's limit."""
-    for chunk in _split(text):
-        await bot.send_message(config.OWNER_ID, chunk, parse_mode=None)
+    await send_to_chat(bot, config.OWNER_ID, text)
 
 
 @router.message(Command("start"))

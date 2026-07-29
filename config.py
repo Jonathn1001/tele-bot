@@ -25,6 +25,12 @@ PRUNE_INTERVAL_HOURS = max(1, int(os.environ.get("PRUNE_INTERVAL_HOURS", "24")))
 HN_DIGEST_TIMES = os.environ.get("HN_DIGEST_TIMES", "12:30")
 PRESS_DIGEST_TIMES = os.environ.get("PRESS_DIGEST_TIMES", "18:30")
 
+# Where the scheduled press digest lands. Empty -> the owner's DM. Group ids are
+# negative; a basic group that later upgrades to a supergroup gets a new -100... id,
+# and the old one stops working (the digest job warns the owner when a send fails).
+_PRESS_CHAT_ID_RAW = os.environ.get("PRESS_CHAT_ID", "").strip()
+PRESS_CHAT_ID = int(_PRESS_CHAT_ID_RAW) if _PRESS_CHAT_ID_RAW else OWNER_ID
+
 # --- Weekly review (Notion → Gemini → Telegram) ---
 # All optional: disable-when-empty, so a deployment without Notion still boots
 # (unlike the required OWNER_ID / DATABASE_URL). See docs spec 2026-07-21.

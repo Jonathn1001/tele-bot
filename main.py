@@ -5,6 +5,7 @@ from datetime import datetime
 from aiogram import Bot
 from aiogram.client.default import DefaultBotProperties
 from aiogram.enums import ParseMode
+from aiogram.exceptions import TelegramAPIError
 
 import analyzer
 import config
@@ -13,7 +14,13 @@ import health
 import hn
 import notion
 from alerts import AlertMatcher
-from bot import build_dispatcher, build_press_report, send_to_owner, setup_bot_commands
+from bot import (
+    build_dispatcher,
+    build_press_report,
+    send_to_chat,
+    send_to_owner,
+    setup_bot_commands,
+)
 from buffer import Message, MessageBuffer
 from crawler import TelegramCrawler
 from scheduler import VN_TZ, Job, parse_times, run_scheduler
@@ -21,6 +28,27 @@ from scheduler import VN_TZ, Job, parse_times, run_scheduler
 logger = logging.getLogger(__name__)
 
 HEARTBEAT_INTERVAL = 30  # seconds between liveness pings; watchdog trips at 180s
+
+
+async def run_press_digest(bot: Bot) -> None:
+    """Push the voz press digest to config.PRESS_CHAT_ID (the owner's DM by default).
+
+    Delivery to a group can fail permanently — the bot was removed, or a basic group
+    migrated to a supergroup and its id changed — so a failed group send warns the
+    owner instead of only landing in the logs. Module-level (not a closure) so that
+    fallback is unit-testable.
+    """
+    text = await build_press_report()
+    try:
+        await send_to_chat(bot, config.PRESS_CHAT_ID, f"📰 Điểm báo (voz)\n\n{text}")
+    except TelegramAPIError:
+        logger.exception("Press digest: delivery to chat %s failed", config.PRESS_CHAT_ID)
+        if config.PRESS_CHAT_ID != config.OWNER_ID:
+            await send_to_owner(
+                bot,
+                f"⚠️ Điểm báo không gửi được vào chat {config.PRESS_CHAT_ID} "
+                "(bot bị kick, hoặc group đã lên supergroup và đổi id).",
+            )
 
 
 async def run_weekly_review(bot: Bot, now: datetime | None = None) -> None:
@@ -104,8 +132,7 @@ async def main() -> None:
         await send_to_owner(bot, f"🔐 HN Security Digest\n\n{text}")
 
     async def press_job() -> None:
-        text = await build_press_report()
-        await send_to_owner(bot, f"📰 Điểm báo sáng (voz)\n\n{text}")
+        await run_press_digest(bot)
 
     async def weekly_review_job() -> None:
         # Fires daily at WEEKLY_REVIEW_TIME; run_weekly_review self-guards to Sunday.
