@@ -10,6 +10,7 @@ os.environ.setdefault("OWNER_ID", "5730878656")
 
 from unittest.mock import AsyncMock
 
+from aiogram.enums import ParseMode
 from aiogram.exceptions import TelegramBadRequest
 
 import config
@@ -33,6 +34,8 @@ async def test_press_digest_goes_to_configured_chat(monkeypatch):
     send.assert_awaited_once()
     assert send.await_args.args[1] == GROUP_ID
     assert "điểm báo" in send.await_args.args[2]
+    # The digest carries <a href> anchors — sent raw it would show markup.
+    assert send.await_args.args[3] == ParseMode.HTML
 
 
 async def test_press_digest_falls_back_to_owner_when_chat_send_fails(monkeypatch):

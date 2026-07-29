@@ -40,7 +40,9 @@ async def run_press_digest(bot: Bot) -> None:
     """
     text = await build_press_report()
     try:
-        await send_to_chat(bot, config.PRESS_CHAT_ID, f"📰 Điểm báo (voz)\n\n{text}")
+        # No header here — analyzer.PRESS_HEADER already titles the digest, and the
+        # links inside it need parse_mode=HTML.
+        await send_to_chat(bot, config.PRESS_CHAT_ID, text, ParseMode.HTML)
     except TelegramAPIError:
         logger.exception("Press digest: delivery to chat %s failed", config.PRESS_CHAT_ID)
         if config.PRESS_CHAT_ID != config.OWNER_ID:
@@ -129,7 +131,7 @@ async def main() -> None:
     async def hn_job() -> None:
         stories = await hn.fetch_security_stories()
         text = await analyzer.hn_digest(stories)
-        await send_to_owner(bot, f"🔐 HN Security Digest\n\n{text}")
+        await send_to_owner(bot, f"🔐 HN Security Digest\n\n{text}", ParseMode.HTML)
 
     async def press_job() -> None:
         await run_press_digest(bot)

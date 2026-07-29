@@ -9,7 +9,7 @@ from aiogram.enums import ParseMode
 from aiogram.filters import Command, CommandObject
 from aiogram.fsm.context import FSMContext
 from aiogram.fsm.state import State, StatesGroup
-from aiogram.types import BotCommand, KeyboardButton, ReplyKeyboardMarkup
+from aiogram.types import BotCommand, KeyboardButton, LinkPreviewOptions, ReplyKeyboardMarkup
 from aiogram.types import Message as TgMessage
 from aiogram.types import TelegramObject
 
@@ -167,10 +167,26 @@ def build_dispatcher(buffer: MessageBuffer, bot: Bot) -> Dispatcher:
     return dp
 
 
+def _safe_cut(window: str, cut: int, fallback: int) -> int:
+    """Pull `cut` back until the prefix holds no half-written tag and no unclosed
+    <a>. Cutting inside an anchor makes Telegram reject the whole message
+    ("can't parse entities"), which would drop an entire digest."""
+    while cut > 0:
+        head = window[:cut]
+        mid_tag = head.rfind("<") > head.rfind(">")
+        open_anchor = head.count("<a ") > head.count("</a>")
+        if not mid_tag and not open_anchor:
+            return cut
+        cut = head.rfind("<")
+    # A single anchor longer than the whole limit; impossible at limit=4096 with
+    # real URLs, but never spin forever if it happens.
+    return fallback
+
+
 def _split(text: str, limit: int = 4096) -> list[str]:
     """Chunk to Telegram's message limit, preferring paragraph then line breaks
     so replies don't get cut mid-sentence. Falls back to a hard slice only for a
-    single line longer than the limit."""
+    single line longer than the limit. Chunks are also HTML-safe — see _safe_cut."""
     chunks: list[str] = []
     remaining = text
     while len(remaining) > limit:
@@ -181,6 +197,7 @@ def _split(text: str, limit: int = 4096) -> list[str]:
             cut = window.rfind("\n")
         if cut == -1:
             cut = limit
+        cut = _safe_cut(window, cut, limit)
         chunks.append(remaining[:cut].rstrip("\n"))
         remaining = remaining[cut:].lstrip("\n")
     if remaining:
@@ -188,20 +205,29 @@ def _split(text: str, limit: int = 4096) -> list[str]:
     return chunks
 
 
-async def _reply_analysis(message: TgMessage, result: str) -> None:
+# Digests are dense with links; the auto-preview of whichever one comes first
+# would tack an unrelated article card onto every push.
+NO_PREVIEW = LinkPreviewOptions(is_disabled=True)
+
+
+def _send_kwargs(parse_mode: str | None) -> dict:
+    return {"parse_mode": parse_mode, "link_preview_options": NO_PREVIEW if parse_mode else None}
+
+
+async def _reply_analysis(message: TgMessage, result: str, parse_mode: str | None = None) -> None:
     for chunk in _split(result):
-        await message.answer(chunk, parse_mode=None)
+        await message.answer(chunk, **_send_kwargs(parse_mode))
 
 
-async def send_to_chat(bot: Bot, chat_id: int, text: str) -> None:
+async def send_to_chat(bot: Bot, chat_id: int, text: str, parse_mode: str | None = None) -> None:
     """Push text to any chat (owner DM, group, supergroup), chunked to Telegram's limit."""
     for chunk in _split(text):
-        await bot.send_message(chat_id, chunk, parse_mode=None)
+        await bot.send_message(chat_id, chunk, **_send_kwargs(parse_mode))
 
 
-async def send_to_owner(bot: Bot, text: str) -> None:
+async def send_to_owner(bot: Bot, text: str, parse_mode: str | None = None) -> None:
     """Push a scheduled digest to the owner, chunked to Telegram's limit."""
-    await send_to_chat(bot, config.OWNER_ID, text)
+    await send_to_chat(bot, config.OWNER_ID, text, parse_mode)
 
 
 @router.message(Command("start"))
@@ -328,11 +354,16 @@ async def cmd_hn(message: TgMessage) -> None:
         await message.answer(analyzer.ANALYSIS_FAILED_REPLY)
         return
     result = await analyzer.hn_digest(stories)
-    await _reply_analysis(message, result)
+    await _reply_analysis(message, result, ParseMode.HTML)
 
 
 async def build_press_report() -> str:
-    """Điểm báo digest plus a short update per pinned news megathread."""
+    """Điểm báo digest plus a short update per pinned news megathread.
+
+    The digest already carries <a href> anchors, so the whole report is sent as
+    HTML — every part appended here must be escaped, or a '<' in a forum title
+    breaks the message.
+    """
     headlines = await voz.fetch_headlines()
     parts = [await analyzer.press_digest(headlines)]
     for pinned in await voz.fetch_pinned_news_threads():
@@ -341,7 +372,8 @@ async def build_press_report() -> str:
             continue
         update = await analyzer.megathread_update(thread)
         if update and update != analyzer.ANALYSIS_FAILED_REPLY:
-            parts.append(f"🔴 {pinned.title}\n{update}")
+            title = analyzer.link_html(pinned.url, f"🔴 {analyzer.escape_html(pinned.title)}")
+            parts.append(f"{title}\n{analyzer.escape_html(update)}")
     return "\n\n".join(parts)
 
 
@@ -349,7 +381,7 @@ async def build_press_report() -> str:
 async def cmd_paper(message: TgMessage) -> None:
     await message.answer("📰 Đang soạn điểm báo từ voz (f/Điểm báo)… (~30s)")
     result = await build_press_report()
-    await _reply_analysis(message, result)
+    await _reply_analysis(message, result, ParseMode.HTML)
 
 
 async def _run_thread(message: TgMessage, url: str) -> None:

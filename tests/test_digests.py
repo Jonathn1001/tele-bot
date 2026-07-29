@@ -222,6 +222,71 @@ async def test_press_digest_numbers_items():
 
 
 # ---------------------------------------------------------------------------
+# inline links — (#N) markers become <a href> anchors, code owns every URL
+# ---------------------------------------------------------------------------
+
+URLS = ["https://voz.vn/t/a.1/", "https://voz.vn/t/b.2/"]
+
+
+def test_linkify_swaps_marker_for_anchor():
+    out = analyzer._linkify("Giá vàng lập đỉnh (#1)", URLS)
+    assert out == 'Giá vàng lập đỉnh <a href="https://voz.vn/t/a.1/">#1</a>'
+
+
+def test_linkify_escapes_prose_but_not_the_anchor():
+    out = analyzer._linkify("Cổ phiếu <b>A</b> & B (#2)", URLS)
+    assert "&lt;b&gt;A&lt;/b&gt; &amp; B" in out
+    assert '<a href="https://voz.vn/t/b.2/">#2</a>' in out
+
+
+def test_linkify_leaves_out_of_range_marker_as_text():
+    # A miscounting model degrades to today's plain numbering, not a dead link.
+    assert analyzer._linkify("tin (#9)", URLS) == "tin (#9)"
+
+
+def test_linkify_rejects_non_http_url():
+    assert analyzer._linkify("tin (#1)", ["javascript:alert(1)"]) == "tin (#1)"
+
+
+async def test_press_digest_inlines_links_and_drops_url_block():
+    headlines = [
+        voz.Headline(title="Tin A", url=URLS[0], summary="s", comments=7),
+        voz.Headline(title="Tin B", url=URLS[1], summary="s", comments=3),
+    ]
+    overview = "Thời sự\n• Tin A quan trọng (#1)\n• Tin B (#2)"
+    with patch.object(analyzer, "_ask", new=AsyncMock(return_value=overview)):
+        result = await analyzer.press_digest(headlines)
+    assert f'<a href="{URLS[0]}">#1</a>' in result
+    assert f'<a href="{URLS[1]}">#2</a>' in result
+    assert "Thảo luận trên voz:" not in result  # no bottom URL block when linked
+
+
+async def test_press_digest_header_has_no_time_of_day():
+    headlines = [voz.Headline(title="Tin A", url=URLS[0], summary="s", comments=7)]
+    with patch.object(analyzer, "_ask", new=AsyncMock(return_value="• Tin A (#1)")):
+        result = await analyzer.press_digest(headlines)
+    assert result.startswith("📰 Điểm báo\n\n")
+    assert "sáng nay" not in result
+
+
+async def test_press_digest_falls_back_when_model_drops_markers():
+    headlines = [voz.Headline(title="Tin A", url=URLS[0], summary="s", comments=7)]
+    with patch.object(analyzer, "_ask", new=AsyncMock(return_value="không có marker")):
+        result = await analyzer.press_digest(headlines)
+    assert "Thảo luận trên voz:" in result and URLS[0] in result
+
+
+async def test_hn_digest_titles_are_clickable():
+    stories = [hn.Story(title="CVE in <X> & Y", url="https://x.com/a", points=10,
+                        comments=2, hn_url="https://news.ycombinator.com/item?id=1")]
+    with patch.object(analyzer, "_ask", new=AsyncMock(return_value="theme (#1)")):
+        result = await analyzer.hn_digest(stories)
+    assert '<a href="https://x.com/a">1. CVE in &lt;X&gt; &amp; Y</a>' in result
+    assert '<a href="https://news.ycombinator.com/item?id=1">💬</a>' in result
+    assert '<a href="https://x.com/a">#1</a>' in result  # marker in the prose too
+
+
+# ---------------------------------------------------------------------------
 # voz thread parsing + summary
 # ---------------------------------------------------------------------------
 
@@ -410,6 +475,26 @@ def test_split_hard_cuts_single_oversized_line():
     assert [len(c) for c in chunks] == [1000, 1000, 500]
 
 
+def _well_formed(chunk: str) -> bool:
+    return chunk.count("<a ") == chunk.count("</a>") and chunk.rfind("<") <= chunk.rfind(">")
+
+
+def test_split_never_cuts_inside_an_anchor():
+    # One unbroken line: no paragraph/newline boundary, so the cut lands wherever
+    # the limit falls — including mid-tag, which Telegram rejects outright.
+    line = (
+        'Tin nóng: EVN tăng giá điện <a href="https://voz.vn/t/evn.3/">#3</a> '
+        'trong khi VN-Index thủng đáy <a href="https://voz.vn/t/vni.5/">#5</a> hôm nay.'
+    )
+    for limit in range(40, len(line)):
+        assert all(_well_formed(c) for c in bot._split(line, limit)), f"limit={limit}"
+
+
+def test_split_preserves_content_around_anchors():
+    line = 'A ' * 50 + '<a href="https://voz.vn/t/a.1/">#1</a>' + ' B' * 50
+    assert "".join(bot._split(line, 60)) == line
+
+
 # ---------------------------------------------------------------------------
 # commands
 # ---------------------------------------------------------------------------
@@ -442,6 +527,23 @@ async def test_cmd_paper_replies_with_digest():
     assert msg.answer.call_count == 2
     all_texts = [c[0][0] for c in msg.answer.call_args_list]
     assert any("điểm báo" in t for t in all_texts)
+
+
+async def test_digest_commands_send_html_without_link_preview():
+    # Anchors only render under parse_mode=HTML; the preview would otherwise
+    # attach an unrelated article card to every digest.
+    msg = _mock_msg()
+    with patch.object(bot, "build_press_report", new=AsyncMock(return_value="điểm báo")):
+        await bot.cmd_paper(msg)
+    kwargs = msg.answer.call_args.kwargs
+    assert kwargs["parse_mode"] == bot.ParseMode.HTML
+    assert kwargs["link_preview_options"].is_disabled is True
+
+
+async def test_plain_analysis_replies_stay_unparsed():
+    msg = _mock_msg()
+    await bot._reply_analysis(msg, "raw *text* with _underscores_")
+    assert msg.answer.call_args.kwargs["parse_mode"] is None
 
 
 async def test_hn_command_is_rate_limited():
@@ -552,7 +654,23 @@ async def test_press_report_appends_megathread_section():
          patch.object(bot.analyzer, "megathread_update", new=AsyncMock(return_value="• diễn biến")):
         report = await bot.build_press_report()
     assert "điểm báo" in report
-    assert "🔴 Tình hình Iran\n• diễn biến" in report
+    assert '<a href="https://voz.vn/t/iran.222/">🔴 Tình hình Iran</a>\n• diễn biến' in report
+
+
+async def test_press_report_escapes_megathread_text():
+    # Report is sent as HTML; a '<' in a forum title or update would otherwise
+    # make Telegram reject the whole message.
+    thread = voz.Thread(title="T", url="https://voz.vn/t/iran.222/", posts=[voz.Post("a", "b")])
+    with patch.object(bot.voz, "fetch_headlines", new=AsyncMock(return_value=[])), \
+         patch.object(bot.analyzer, "press_digest", new=AsyncMock(return_value="điểm báo")), \
+         patch.object(bot.voz, "fetch_pinned_news_threads",
+                      new=AsyncMock(return_value=[_pinned(title="Iran <> Israel & Mỹ")])), \
+         patch.object(bot.voz, "fetch_thread", new=AsyncMock(return_value=thread)), \
+         patch.object(bot.analyzer, "megathread_update",
+                      new=AsyncMock(return_value="• A & B <chưa rõ>")):
+        report = await bot.build_press_report()
+    assert "Iran &lt;&gt; Israel &amp; Mỹ" in report
+    assert "• A &amp; B &lt;chưa rõ&gt;" in report
 
 
 async def test_press_report_without_pinned_is_digest_only():
